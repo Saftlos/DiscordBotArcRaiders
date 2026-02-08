@@ -157,44 +157,46 @@ class SteamNews(commands.Cog):
         self.check_news.cancel()
 
     def clean_html(self, raw_text):
-        # 1. Extract Images (all of them)
+        # 1. Extract Images
         image_urls = []
         img_matches = re.findall(r'\[img src="([^"]+)"\]', raw_text)
         for img_path in img_matches:
             clean_url = img_path.replace("{STEAM_CLAN_IMAGE}", "https://clan.cloudflare.steamstatic.com/images")
             image_urls.append(clean_url)
 
-        # 2. Pre-process Steam's messy BBCode
         text = raw_text
         
-        # Remove [list] tags completely, we just want the items
+        # 2. Cleanup Steam nonsense
         text = text.replace("[list]", "").replace("[/list]", "")
-        text = text.replace("[*]", "\n\n• ") # Force newlines before list items
         text = text.replace("[/*]", "") 
+        text = re.sub(r'\[/?p\]', '\n', text)
+        text = re.sub(r'\[/?br\]', '\n', text)
+
+        # 3. Protect Structure with Placeholders (PRE-TRANSLATION)
+        # We replace Markdown/BBCode with tokens that DeepL won't touch.
         
-        # Headers - Add TRIPLE newlines to force DeepL to see them as separate paragraphs
-        text = re.sub(r'\[h1\](.*?)\[/h1\]', r'\n\n\n# \1\n\n\n', text)
-        text = re.sub(r'\[h2\](.*?)\[/h2\]', r'\n\n\n## \1\n\n\n', text)
-        text = re.sub(r'\[h3\](.*?)\[/h3\]', r'\n\n\n### \1\n\n\n', text)
+        # Lists: [*] -> [[LIST_ITEM]]
+        text = text.replace("[*]", "\n[[LIST_ITEM]] ")
         
-        # Bold, Italic, Underline
+        # Headers: [h1]...[/h1] -> [[H1]]...[[/H1]]
+        text = re.sub(r'\[h1\](.*?)\[/h1\]', r'\n\n[[H1]]\1[[/H1]]\n\n', text)
+        text = re.sub(r'\[h2\](.*?)\[/h2\]', r'\n\n[[H2]]\1[[/H2]]\n\n', text)
+        text = re.sub(r'\[h3\](.*?)\[/h3\]', r'\n\n[[H3]]\1[[/H3]]\n\n', text)
+        
+        # Bold/Italic/Underline (Standard Markdown usually survives, but let's clean BBCode first)
         text = re.sub(r'\[b\](.*?)\[/b\]', r'**\1**', text)
         text = re.sub(r'\[i\](.*?)\[/i\]', r'*\1*', text)
         text = re.sub(r'\[u\](.*?)\[/u\]', r'__\1__', text)
         
-        # Urls: [url=...]...[/url] -> [...](...)
+        # Urls
         text = re.sub(r'\[url=([^\]]+)\](.*?)\[/url\]', r'[\2](\1)', text)
         
-        # Remove [img], [previewyoutube] and other tags
+        # Remove Tags
         text = re.sub(r'\[img.*?\[/img\]', '', text)
         text = re.sub(r'\[.*?\]', '', text)
         
-        # Unescape and strip
         text = html.unescape(text).strip()
-        
-        # Post-process whitespace:
-        # 1. Remove excessive newlines (more than 3 becomes 2)
-        text = re.sub(r'\n{4,}', '\n\n', text)
+        text = re.sub(r'\n{3,}', '\n\n', text)
         
         return text, image_urls
 
@@ -202,19 +204,20 @@ class SteamNews(commands.Cog):
         return text
 
     def post_process_markdown(self, text):
-        """Repairs formatting that might have been broken by DeepL."""
-        # 1. Fix Headers: Force newline before # if it's missing (DeepL loves to merge them)
-        # Look for a header that is NOT preceded by at least two newlines
-        text = re.sub(r'([^\n])\n?# ', r'\1\n\n# ', text)
-        text = re.sub(r'([^\n])\n?## ', r'\1\n\n## ', text)
-        text = re.sub(r'([^\n])\n?### ', r'\1\n\n### ', text)
+        """Restores structure from placeholders AFTER translation."""
         
-        # 2. Fix Lists: Force newline before list items • or -
-        text = re.sub(r'([^\n])\n?• ', r'\1\n• ', text)
-        text = re.sub(r'([^\n])\n?- ', r'\1\n- ', text)
-
-        # 3. Ensure headers have a newline AFTER them too
-        text = re.sub(r'(#+ .+?)\n([^\n])', r'\1\n\n\2', text)
+        # Restore Headers and ensure newlines
+        text = re.sub(r'\[\[H1\]\](.*?)\[\[/H1\]\]', r'\n\n# \1\n\n', text)
+        text = re.sub(r'\[\[H2\]\](.*?)\[\[/H2\]\]', r'\n\n## \1\n\n', text)
+        text = re.sub(r'\[\[H3\]\](.*?)\[\[/H3\]\]', r'\n\n### \1\n\n', text)
+        
+        # Restore Lists
+        text = text.replace("[[LIST_ITEM]]", "\n-")
+        text = text.replace("[[List_Item]]", "\n-") # DeepL sometimes capitalizes casing
+        text = text.replace("[[List Item]]", "\n-") # DeepL sometimes adds spaces
+        
+        # Remove potential double spaces/newlines introduced by restoring
+        text = re.sub(r'\n{3,}', '\n\n', text)
         
         return text
 
