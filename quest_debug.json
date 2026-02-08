@@ -1,0 +1,65 @@
+{
+  "id": "a-bad-feeling",
+  "name": "A Bad Feeling",
+  "objectives": [
+    "Find and search any ARC Probe or ARC Courier"
+  ],
+  "xp": 0,
+  "granted_items": [],
+  "created_at": "2025-10-07T14:15:00.671965+00:00",
+  "updated_at": "2025-10-07T14:15:00.671965+00:00",
+  "locations": [],
+  "marker_category": null,
+  "image": "https://cdn.metaforge.app/arc-raiders/images/a-bad-feeling.webp",
+  "guide_links": [
+    {
+      "url": "https://metaforge.app/arc-raiders/a-bad-feeling-quest-arc-raiders",
+      "label": "A Bad Feeling Quest Guide"
+    }
+  ],
+  "trader_name": "Celeste",
+  "sort_order": 0,
+  "position": {
+    "x": 210,
+    "y": 800
+  },
+  "required_items": [],
+  "rewards": [
+    {
+      "id": "1dcfa564-efc5-4e00-aac9-aefe21a8eb31",
+      "item": {
+        "id": "duct-tape-recipe",
+        "icon": "https://cdn.metaforge.app/arc-raiders/icons/duct-tape.webp",
+        "name": "Duct Tape",
+        "rarity": "Uncommon",
+        "item_type": "Topside Material"
+      },
+      "item_id": "duct-tape-recipe",
+      "quantity": "5"
+    },
+    {
+      "id": "250403c6-ee9e-4ef2-831b-3173a8948d46",
+      "item": {
+        "id": "spring",
+        "icon": "https://cdn.metaforge.app/arc-raiders/icons/spring.webp",
+        "name": "Steel Spring",
+        "rarity": "Uncommon",
+        "item_type": "Topside Material"
+      },
+      "item_id": "spring",
+      "quantity": "5"
+    },
+    {
+      "id": "a748a753-77e8-42c1-89af-135beeea2c25",
+      "item": {
+        "id": "metal-parts",
+        "icon": "https://cdn.metaforge.app/arc-raiders/icons/metal-parts.webp",
+        "name": "Metal Parts",
+        "rarity": "Common",
+        "item_type": "Basic Material"
+      },
+      "item_id": "metal-parts",
+      "quantity": "10"
+    }
+  ]
+}

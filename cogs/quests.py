@@ -24,38 +24,65 @@ class Quests(commands.Cog):
         # Best Match
         quest = quests[0]
         
-        embed = discord.Embed(title=f"📜 Quest: {quest.get('name', 'Unbekannt')}", color=discord.Color.gold())
-        embed.description = quest.get("description", "Keine Beschreibung.")
+        # Parse Quest Data
+        q_name = quest.get("name", "Unbekannt")
+        q_trader = quest.get("trader_name", "Unbekannt")
+        q_img = quest.get("image")
+        
+        # Description / Objectives
+        # Some quests have 'objectives' list, some might have 'description' (though debug showed objectives)
+        objectives = quest.get("objectives", [])
+        desc_text = "\n".join([f"• {obj}" for obj in objectives]) if objectives else "Keine Beschreibung verfügbar."
+        
+        embed = discord.Embed(title=f"📜 Quest: {q_name}", description=desc_text, color=discord.Color.gold())
+        
+        if q_img:
+            embed.set_thumbnail(url=q_img)
+            
+        embed.add_field(name="👤 Auftraggeber", value=q_trader, inline=True)
         
         # Requirements
+        # Note: API usually returns 'required_items' similar to rewards
         reqs = quest.get("required_items", [])
         if reqs:
             req_text = ""
             for r in reqs:
-                # Assuming structure: { "item": { "name": "..." }, "quantity": 5 }
-                # Or flat: { "itemName": "...", "count": 5 }
-                # Based on typical API:
-                item_name = r.get("item", {}).get("name") or r.get("itemName", "Item")
-                count = r.get("quantity") or r.get("count", 1)
+                # Structure assumption based on rewards: { "item": { "name": "..." }, "quantity": "..." }
+                item_obj = r.get("item", {})
+                item_name = item_obj.get("name") or r.get("item_id", "Item")
+                count = r.get("quantity", "1")
                 req_text += f"• {count}x **{item_name}**\n"
-            embed.add_field(name="📋 Benötigt", value=req_text, inline=False)
+            
+            if req_text:
+                embed.add_field(name="📋 Benötigt", value=req_text, inline=False)
             
         # Rewards
         rewards = quest.get("rewards", [])
         if rewards:
             rew_text = ""
             for r in rewards:
-                type_name = r.get("type", "Item")
-                val = r.get("value") or r.get("quantity", 1)
-                name = r.get("name", "")
-                rew_text += f"• {val}x {name} ({type_name})\n"
-            embed.add_field(name="🎁 Belohnung", value=rew_text, inline=False)
-            
-        if "trader" in quest:
-             embed.set_footer(text=f"Trader: {quest['trader']}")
+                item_obj = r.get("item", {})
+                name = item_obj.get("name") or r.get("item_id", "Unknown")
+                count = r.get("quantity", "1")
+                rarity = item_obj.get("rarity", "")
+                
+                # Format: 5x Metal Parts (Common)
+                entry = f"• {count}x {name}"
+                if rarity:
+                    entry += f" *({rarity})*"
+                rew_text += entry + "\n"
+                
+            if rew_text:
+                embed.add_field(name="🎁 Belohnung", value=rew_text, inline=False)
+
+        # Guide Links
+        links = quest.get("guide_links", [])
+        if links:
+            link_text = " | ".join([f"[{l.get('label', 'Guide')}]({l.get('url')})" for l in links])
+            embed.add_field(name="🔗 Guides", value=link_text, inline=False)
 
         await interaction.followup.send(embed=embed)
-
+        
     @quest_search.autocomplete('name')
     async def quest_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         api: ArcRaidersAPI = self.bot.api
