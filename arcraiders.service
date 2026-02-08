@@ -1,0 +1,24 @@
+[Unit]
+Description=Arc Raiders Discord Bot
+After=network.target
+
+[Service]
+# WICHTIG: Ändere 'pi' zu deinem Benutzernamen auf dem Raspberry Pi, falls anders
+User=saftlos
+Group=saftlos
+
+# Der Pfad, den du angegeben hast
+WorkingDirectory=/mnt/ArcRaidersDiscord
+
+# Befehl zum Starten (nutzt direkt das Python im venv)
+ExecStart=/mnt/ArcRaidersDiscord/venv/bin/python main.py
+
+# Automatischer Neustart bei Absturz
+Restart=always
+RestartSec=10
+
+# Logs sofort anzeigen (nicht puffern)
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

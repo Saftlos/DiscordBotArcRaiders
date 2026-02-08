@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+.venv
+env.bak
+venv.bak
+
+# VS Code
+.vscode/
+
+# Project Specific
+data/news_state.json
+# data/mutes.json # Uncomment if you don't want to sync mutable data
