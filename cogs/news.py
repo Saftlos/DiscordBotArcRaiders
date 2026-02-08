@@ -262,14 +262,15 @@ class SteamNews(commands.Cog):
                         
                         # If it's a new post
                         if news_id != self.last_posted_id:
-                            await self.post_news(latest_news)
+                            # AUTOMATIC POST -> PING ROLE = TRUE
+                            await self.post_news(latest_news, ping_role=True)
                             self.save_state(news_id)
                     else:
                         print(f"Steam News API gab Status zurück: {response.status}")
         except Exception as e:
             print(f"Fehler beim Prüfen der Steam News: {e}")
 
-    async def post_news(self, news_item):
+    async def post_news(self, news_item, ping_role=False):
         channel = self.bot.get_channel(self.news_channel_id)
         if not channel:
             print(f"News Channel {self.news_channel_id} nicht gefunden.")
@@ -291,12 +292,12 @@ class SteamNews(commands.Cog):
         url = news_item.get("url")
         
         # Header Message
-        date_timestamp = news_item.get("date")
-        # date_str = ""
-        # if date_timestamp:
-        #      date_str = f"<t:{date_timestamp}:D>" 
         
-        header = f"**{translated_title}**\n\n"
+        header = ""
+        if ping_role:
+             header += "<@&1466986718229041204>\n\n"
+             
+        header += f"**{translated_title}**\n\n"
         
         # Split content into chunks of 1900 chars
         full_text = header + translated_contents
@@ -405,7 +406,8 @@ class SteamNews(commands.Cog):
                             await interaction.followup.send("Keine offiziellen News gefunden.", ephemeral=True)
                             return
 
-                        await self.post_news(latest_news)
+                        # MANUAL POST -> PING ROLE = FALSE
+                        await self.post_news(latest_news, ping_role=False)
                         # Update state so we don't double post next check (optional, but good practice)
                         self.save_state(latest_news.get("gid"))
                         
