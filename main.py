@@ -33,7 +33,8 @@ class ArcRaidersBot(commands.Bot):
             "cogs.maps",
             "cogs.admin",
             "cogs.moderation",
-            "cogs.news"
+            "cogs.news",
+            "cogs.quests"
         ]
         
         for ext in initial_extensions:
