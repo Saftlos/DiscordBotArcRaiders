@@ -122,12 +122,12 @@ class SteamNews(commands.Cog):
         
         def _translate_sync():
             try:
-                # Use XML tag handling to preserve structure
+                # Use HTML tag handling which is often smarter for web content
                 result = self.translator.translate_text(
                     text,
                     target_lang="DE",
                     glossary=self.glossary if self.glossary else None,
-                    tag_handling="xml"
+                    tag_handling="html"
                 )
                 return result.text
             except Exception as e:
@@ -165,12 +165,10 @@ class SteamNews(commands.Cog):
             clean_url = img_path.replace("{STEAM_CLAN_IMAGE}", "https://clan.cloudflare.steamstatic.com/images")
             image_urls.append(clean_url)
 
-        # 2. ESCAPE CONTENT FIRST (Critical for XML handling)
-        # We must escape the raw text so that existing < and > don't break our XML structure
+        # 2. ESCAPE CONTENT FIRST
         text = html.escape(raw_text)
         
-        # 3. Apply Structure Tags (Replace escaped BBCode with real HTML)
-        # Note: raw_text had [b], html.escape kept them as [b]
+        # 3. Apply Structure Tags
         
         # Lists
         text = text.replace("[list]", "<ul>").replace("[/list]", "</ul>")
@@ -188,8 +186,14 @@ class SteamNews(commands.Cog):
         text = re.sub(r'\[u\](.*?)\[/u\]', r'<u>\1</u>', text)
         
         # Urls -> <a href="...">...</a>
-        # Note: The URL inside [url=...] is also escaped now!
-        text = re.sub(r'\[url=([^\]]+)\](.*?)\[/url\]', r'<a href="\1">\2</a>', text)
+        # Fix: Remove quotes from the URL capture group if they exist
+        # [url="http..."] -> \1="http..." -> we want http...
+        def fix_url(match):
+            url = match.group(1).replace('&quot;', '').replace('"', '').strip()
+            content = match.group(2)
+            return f'<a href="{url}">{content}</a>'
+            
+        text = re.sub(r'\[url=([^\]]+)\](.*?)\[/url\]', fix_url, text)
         
         # Cleanups
         text = re.sub(r'\[img.*?\[/img\]', '', text)
@@ -203,7 +207,6 @@ class SteamNews(commands.Cog):
         """Converts the translated HTML back to Discord Markdown."""
         
         # 1. Remove structure tags and replace with Markdown
-        # Use simple replacements where possible to avoid regex failures on nested/broken tags
         
         # Headers
         text = text.replace("<h1>", "\n\n# ").replace("</h1>", "\n\n")
@@ -219,10 +222,11 @@ class SteamNews(commands.Cog):
         text = text.replace("<i>", "*").replace("</i>", "*")
         text = text.replace("<u>", "__").replace("</u>", "__")
         
-        # Links - Regex is still needed here but we permit loose matching
+        # Links
+        # We process links BEFORE unescaping to avoid breaking the HTML structure if the text contained tags
         text = re.sub(r'<a href="([^"]+)">(.*?)</a>', r'[\2](\1)', text, flags=re.DOTALL)
         
-        # 2. Unescape content (Critical: DeepL might have returned &lt; for < in the text content)
+        # 2. Unescape content
         text = html.unescape(text)
         
         # Cleanup extra newlines
