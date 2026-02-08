@@ -167,7 +167,7 @@ class SteamNews(commands.Cog):
         # 2. Convert BBCode to Markdown
         text = raw_text
         
-        # Headers - Ensure they have double newlines to survive DeepL
+        # Headers - Use aggressive newlines and standard Markdown
         text = re.sub(r'\[h1\](.*?)\[/h1\]', r'\n\n# \1\n\n', text)
         text = re.sub(r'\[h2\](.*?)\[/h2\]', r'\n\n## \1\n\n', text)
         text = re.sub(r'\[h3\](.*?)\[/h3\]', r'\n\n### \1\n\n', text)
@@ -177,14 +177,10 @@ class SteamNews(commands.Cog):
         text = re.sub(r'\[i\](.*?)\[/i\]', r'*\1*', text)
         text = re.sub(r'\[u\](.*?)\[/u\]', r'__\1__', text)
         
-        # Lists: Remove [p] inside lists to avoid extra newlines
-        # Remove [p] immediately after [*]
+        # Lists: Clean up messy steam list tags
         text = text.replace("[*][p]", "[*]")
-        # Remove [/p] immediately before [/*]
         text = text.replace("[/p][/*]", "[/*]")
-        
         text = text.replace("[list]", "").replace("[/list]", "")
-        # text = text.replace("[*]", "• ") # Old bad formatting
         text = self.format_lists(text)
         text = text.replace("[/*]", "") 
         
@@ -198,7 +194,7 @@ class SteamNews(commands.Cog):
         text = re.sub(r'\[/?p\]', '\n', text)
         text = re.sub(r'\[/?br\]', '\n', text)
         
-        # Remove any remaining tags like [previewyoutube] etc
+        # Remove any remaining tags
         text = re.sub(r'\[.*?\]', '', text)
         
         # Unescape and strip
@@ -209,10 +205,25 @@ class SteamNews(commands.Cog):
         
         return text, image_urls
 
-    # Helper to improve list formatting
     def format_lists(self, text):
-        # 1. Ensure list items are on new lines with double spacing for DeepL
-        text = text.replace("[*]", "\n\n• ")
+        # Ensure list items are on new lines with clear bullet points
+        # Using a distinct unicode bullet helps DeepL understand it's a list
+        return text.replace("[*]", "\n- ")
+
+    def post_process_markdown(self, text):
+        """Repairs formatting that might have been broken by DeepL."""
+        # Fix Headers that lost their newlines (e.g. "Text. ## Header" -> "Text.\n\n## Header")
+        # Look for ## followed by text, not preceded by newline
+        text = re.sub(r'(?<!\n)## ', r'\n\n## ', text)
+        text = re.sub(r'(?<!\n)# ', r'\n\n# ', text)
+        text = re.sub(r'(?<!\n)### ', r'\n\n### ', text)
+        
+        # Fix Lists that merged (e.g. "Text - Item" -> "Text\n- Item")
+        # If - is at start of sentence but not line
+        text = re.sub(r'(?<!\n)- ', r'\n- ', text)
+        
+        # Consolidate newlines again
+        text = re.sub(r'\n{3,}', '\n\n', text)
         return text
 
     @tasks.loop(minutes=15)
@@ -265,6 +276,7 @@ class SteamNews(commands.Cog):
         
         # Translate Content
         translated_contents = await self.translate_text(contents)
+        translated_contents = self.post_process_markdown(translated_contents)
         
         # Get URL
         url = news_item.get("url")
