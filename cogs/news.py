@@ -122,11 +122,12 @@ class SteamNews(commands.Cog):
         
         def _translate_sync():
             try:
-                # Use glossary if available
+                # Use XML tag handling to preserve structure
                 result = self.translator.translate_text(
                     text,
                     target_lang="DE",
-                    glossary=self.glossary if self.glossary else None
+                    glossary=self.glossary if self.glossary else None,
+                    tag_handling="xml"
                 )
                 return result.text
             except Exception as e:
@@ -166,60 +167,67 @@ class SteamNews(commands.Cog):
 
         text = raw_text
         
-        # 2. Cleanup Steam nonsense
-        text = text.replace("[list]", "").replace("[/list]", "")
-        text = text.replace("[/*]", "") 
-        text = re.sub(r'\[/?p\]', '\n', text)
-        text = re.sub(r'\[/?br\]', '\n', text)
-
-        # 3. Protect Structure with Placeholders (PRE-TRANSLATION)
-        # We replace Markdown/BBCode with tokens that DeepL won't touch.
+        # 2. Convert to simplified HTML for DeepL
+        # Steam BBCode -> HTML
         
-        # Lists: [*] -> [[LIST_ITEM]]
-        text = text.replace("[*]", "\n[[LIST_ITEM]] ")
+        # Lists
+        text = text.replace("[list]", "<ul>").replace("[/list]", "</ul>")
+        text = text.replace("[*]", "<li>")
+        text = text.replace("[/*]", "</li>")
         
-        # Headers: [h1]...[/h1] -> [[H1]]...[[/H1]]
-        text = re.sub(r'\[h1\](.*?)\[/h1\]', r'\n\n[[H1]]\1[[/H1]]\n\n', text)
-        text = re.sub(r'\[h2\](.*?)\[/h2\]', r'\n\n[[H2]]\1[[/H2]]\n\n', text)
-        text = re.sub(r'\[h3\](.*?)\[/h3\]', r'\n\n[[H3]]\1[[/H3]]\n\n', text)
+        # Headers
+        text = re.sub(r'\[h1\](.*?)\[/h1\]', r'<h1>\1</h1>', text)
+        text = re.sub(r'\[h2\](.*?)\[/h2\]', r'<h2>\1</h2>', text)
+        text = re.sub(r'\[h3\](.*?)\[/h3\]', r'<h3>\1</h3>', text)
         
-        # Bold/Italic/Underline (Standard Markdown usually survives, but let's clean BBCode first)
-        text = re.sub(r'\[b\](.*?)\[/b\]', r'**\1**', text)
-        text = re.sub(r'\[i\](.*?)\[/i\]', r'*\1*', text)
-        text = re.sub(r'\[u\](.*?)\[/u\]', r'__\1__', text)
+        # Basic Formatting
+        text = re.sub(r'\[b\](.*?)\[/b\]', r'<b>\1</b>', text)
+        text = re.sub(r'\[i\](.*?)\[/i\]', r'<i>\1</i>', text)
+        text = re.sub(r'\[u\](.*?)\[/u\]', r'<u>\1</u>', text)
         
-        # Urls
-        text = re.sub(r'\[url=([^\]]+)\](.*?)\[/url\]', r'[\2](\1)', text)
+        # Urls -> <a href="...">...</a>
+        text = re.sub(r'\[url=([^\]]+)\](.*?)\[/url\]', r'<a href="\1">\2</a>', text)
         
-        # Remove Tags
+        # Cleanups
         text = re.sub(r'\[img.*?\[/img\]', '', text)
-        text = re.sub(r'\[.*?\]', '', text)
+        text = re.sub(r'\[.*?\]', '', text) # Remove other BBCode
         
-        text = html.unescape(text).strip()
+        # HTML Entities (we decode them so DeepL sees real text, but keep tags)
+        # However, we must be careful not to unescape < > that we just made.
+        # Actually, Steam text usually comes escaped.
+        # Let's decode first, then encode our tags? No, that's messy.
+        # Steam API usually returns plain text for content with [] tags.
+        text = html.unescape(text)
+        
+        return text.strip(), image_urls
+
+    def html_to_discord_markdown(self, text):
+        """Converts the translated HTML back to Discord Markdown."""
+        
+        # Convert HTML tags back to Markdown
+        
+        # Headers
+        text = re.sub(r'<h1>(.*?)</h1>', r'\n\n# \1\n\n', text, flags=re.DOTALL)
+        text = re.sub(r'<h2>(.*?)</h2>', r'\n\n## \1\n\n', text, flags=re.DOTALL)
+        text = re.sub(r'<h3>(.*?)</h3>', r'\n\n### \1\n\n', text, flags=re.DOTALL)
+        
+        # Lists
+        text = text.replace("<ul>", "").replace("</ul>", "")
+        text = re.sub(r'<li>(.*?)</li>', r'\n- \1', text, flags=re.DOTALL)
+        text = re.sub(r'<li>(.*?)(?=<li|</ul>)', r'\n- \1', text, flags=re.DOTALL) # Handle missing closing tags if any
+        
+        # Basic Formatting
+        text = re.sub(r'<b>(.*?)</b>', r'**\1**', text, flags=re.DOTALL)
+        text = re.sub(r'<i>(.*?)</i>', r'*\1*', text, flags=re.DOTALL)
+        text = re.sub(r'<u>(.*?)</u>', r'__\1__', text, flags=re.DOTALL)
+        
+        # Links
+        text = re.sub(r'<a href="([^"]+)">(.*?)</a>', r'[\2](\1)', text, flags=re.DOTALL)
+        
+        # Cleanup extra newlines
         text = re.sub(r'\n{3,}', '\n\n', text)
         
-        return text, image_urls
-
-    def format_lists(self, text):
-        return text
-
-    def post_process_markdown(self, text):
-        """Restores structure from placeholders AFTER translation."""
-        
-        # Restore Headers and ensure newlines
-        text = re.sub(r'\[\[H1\]\](.*?)\[\[/H1\]\]', r'\n\n# \1\n\n', text)
-        text = re.sub(r'\[\[H2\]\](.*?)\[\[/H2\]\]', r'\n\n## \1\n\n', text)
-        text = re.sub(r'\[\[H3\]\](.*?)\[\[/H3\]\]', r'\n\n### \1\n\n', text)
-        
-        # Restore Lists
-        text = text.replace("[[LIST_ITEM]]", "\n-")
-        text = text.replace("[[List_Item]]", "\n-") # DeepL sometimes capitalizes casing
-        text = text.replace("[[List Item]]", "\n-") # DeepL sometimes adds spaces
-        
-        # Remove potential double spaces/newlines introduced by restoring
-        text = re.sub(r'\n{3,}', '\n\n', text)
-        
-        return text
+        return text.strip()
 
     @tasks.loop(minutes=15)
     async def check_news(self):
@@ -270,8 +278,9 @@ class SteamNews(commands.Cog):
         contents, image_urls = self.clean_html(news_item.get("contents", ""))
         
         # Translate Content
-        translated_contents = await self.translate_text(contents)
-        translated_contents = self.post_process_markdown(translated_contents)
+        # Translate Content (Text is HTML here)
+        translated_html = await self.translate_text(contents)
+        translated_contents = self.html_to_discord_markdown(translated_html)
         
         # Get URL
         url = news_item.get("url")
