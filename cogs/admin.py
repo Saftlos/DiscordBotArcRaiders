@@ -94,7 +94,7 @@ class Admin(commands.Cog):
              return
 
         # 2. Target Channel
-        channel_id = 787622703866707978
+        channel_id = 1466942484943868088
         channel = self.bot.get_channel(channel_id)
         if not channel:
             await interaction.response.send_message(f"❌ Ziel-Kanal {channel_id} nicht gefunden!", ephemeral=True)
