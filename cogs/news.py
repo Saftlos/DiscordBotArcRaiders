@@ -165,10 +165,12 @@ class SteamNews(commands.Cog):
             clean_url = img_path.replace("{STEAM_CLAN_IMAGE}", "https://clan.cloudflare.steamstatic.com/images")
             image_urls.append(clean_url)
 
-        text = raw_text
+        # 2. ESCAPE CONTENT FIRST (Critical for XML handling)
+        # We must escape the raw text so that existing < and > don't break our XML structure
+        text = html.escape(raw_text)
         
-        # 2. Convert to simplified HTML for DeepL
-        # Steam BBCode -> HTML
+        # 3. Apply Structure Tags (Replace escaped BBCode with real HTML)
+        # Note: raw_text had [b], html.escape kept them as [b]
         
         # Lists
         text = text.replace("[list]", "<ul>").replace("[/list]", "</ul>")
@@ -186,43 +188,42 @@ class SteamNews(commands.Cog):
         text = re.sub(r'\[u\](.*?)\[/u\]', r'<u>\1</u>', text)
         
         # Urls -> <a href="...">...</a>
+        # Note: The URL inside [url=...] is also escaped now!
         text = re.sub(r'\[url=([^\]]+)\](.*?)\[/url\]', r'<a href="\1">\2</a>', text)
         
         # Cleanups
         text = re.sub(r'\[img.*?\[/img\]', '', text)
-        text = re.sub(r'\[.*?\]', '', text) # Remove other BBCode
-        
-        # HTML Entities (we decode them so DeepL sees real text, but keep tags)
-        # However, we must be careful not to unescape < > that we just made.
-        # Actually, Steam text usually comes escaped.
-        # Let's decode first, then encode our tags? No, that's messy.
-        # Steam API usually returns plain text for content with [] tags.
-        text = html.unescape(text)
+        text = re.sub(r'\[.*?\]', '', text) 
+        text = re.sub(r'\[/?p\]', '\n', text)
+        text = re.sub(r'\[/?br\]', '\n', text)
         
         return text.strip(), image_urls
 
     def html_to_discord_markdown(self, text):
         """Converts the translated HTML back to Discord Markdown."""
         
-        # Convert HTML tags back to Markdown
+        # 1. Remove structure tags and replace with Markdown
+        # Use simple replacements where possible to avoid regex failures on nested/broken tags
         
         # Headers
-        text = re.sub(r'<h1>(.*?)</h1>', r'\n\n# \1\n\n', text, flags=re.DOTALL)
-        text = re.sub(r'<h2>(.*?)</h2>', r'\n\n## \1\n\n', text, flags=re.DOTALL)
-        text = re.sub(r'<h3>(.*?)</h3>', r'\n\n### \1\n\n', text, flags=re.DOTALL)
+        text = text.replace("<h1>", "\n\n# ").replace("</h1>", "\n\n")
+        text = text.replace("<h2>", "\n\n## ").replace("</h2>", "\n\n")
+        text = text.replace("<h3>", "\n\n### ").replace("</h3>", "\n\n")
         
         # Lists
         text = text.replace("<ul>", "").replace("</ul>", "")
-        text = re.sub(r'<li>(.*?)</li>', r'\n- \1', text, flags=re.DOTALL)
-        text = re.sub(r'<li>(.*?)(?=<li|</ul>)', r'\n- \1', text, flags=re.DOTALL) # Handle missing closing tags if any
+        text = text.replace("<li>", "\n- ").replace("</li>", "")
         
-        # Basic Formatting
-        text = re.sub(r'<b>(.*?)</b>', r'**\1**', text, flags=re.DOTALL)
-        text = re.sub(r'<i>(.*?)</i>', r'*\1*', text, flags=re.DOTALL)
-        text = re.sub(r'<u>(.*?)</u>', r'__\1__', text, flags=re.DOTALL)
+        # Formatting
+        text = text.replace("<b>", "**").replace("</b>", "**")
+        text = text.replace("<i>", "*").replace("</i>", "*")
+        text = text.replace("<u>", "__").replace("</u>", "__")
         
-        # Links
+        # Links - Regex is still needed here but we permit loose matching
         text = re.sub(r'<a href="([^"]+)">(.*?)</a>', r'[\2](\1)', text, flags=re.DOTALL)
+        
+        # 2. Unescape content (Critical: DeepL might have returned &lt; for < in the text content)
+        text = html.unescape(text)
         
         # Cleanup extra newlines
         text = re.sub(r'\n{3,}', '\n\n', text)
