@@ -164,66 +164,58 @@ class SteamNews(commands.Cog):
             clean_url = img_path.replace("{STEAM_CLAN_IMAGE}", "https://clan.cloudflare.steamstatic.com/images")
             image_urls.append(clean_url)
 
-        # 2. Convert BBCode to Markdown
+        # 2. Pre-process Steam's messy BBCode
         text = raw_text
         
-        # Headers - Use aggressive newlines and standard Markdown
-        text = re.sub(r'\[h1\](.*?)\[/h1\]', r'\n\n# \1\n\n', text)
-        text = re.sub(r'\[h2\](.*?)\[/h2\]', r'\n\n## \1\n\n', text)
-        text = re.sub(r'\[h3\](.*?)\[/h3\]', r'\n\n### \1\n\n', text)
+        # Remove [list] tags completely, we just want the items
+        text = text.replace("[list]", "").replace("[/list]", "")
+        text = text.replace("[*]", "\n\n• ") # Force newlines before list items
+        text = text.replace("[/*]", "") 
+        
+        # Headers - Add TRIPLE newlines to force DeepL to see them as separate paragraphs
+        text = re.sub(r'\[h1\](.*?)\[/h1\]', r'\n\n\n# \1\n\n\n', text)
+        text = re.sub(r'\[h2\](.*?)\[/h2\]', r'\n\n\n## \1\n\n\n', text)
+        text = re.sub(r'\[h3\](.*?)\[/h3\]', r'\n\n\n### \1\n\n\n', text)
         
         # Bold, Italic, Underline
         text = re.sub(r'\[b\](.*?)\[/b\]', r'**\1**', text)
         text = re.sub(r'\[i\](.*?)\[/i\]', r'*\1*', text)
         text = re.sub(r'\[u\](.*?)\[/u\]', r'__\1__', text)
         
-        # Lists: Clean up messy steam list tags
-        text = text.replace("[*][p]", "[*]")
-        text = text.replace("[/p][/*]", "[/*]")
-        text = text.replace("[list]", "").replace("[/list]", "")
-        text = self.format_lists(text)
-        text = text.replace("[/*]", "") 
-        
         # Urls: [url=...]...[/url] -> [...](...)
         text = re.sub(r'\[url=([^\]]+)\](.*?)\[/url\]', r'[\2](\1)', text)
         
-        # Remove [img] tags
+        # Remove [img], [previewyoutube] and other tags
         text = re.sub(r'\[img.*?\[/img\]', '', text)
-        
-        # Remove [p], [br] and other formatting
-        text = re.sub(r'\[/?p\]', '\n', text)
-        text = re.sub(r'\[/?br\]', '\n', text)
-        
-        # Remove any remaining tags
         text = re.sub(r'\[.*?\]', '', text)
         
         # Unescape and strip
         text = html.unescape(text).strip()
         
-        # Consolidate multiple newlines (reduce 3+ to 2)
-        text = re.sub(r'\n{3,}', '\n\n', text)
+        # Post-process whitespace:
+        # 1. Remove excessive newlines (more than 3 becomes 2)
+        text = re.sub(r'\n{4,}', '\n\n', text)
         
         return text, image_urls
 
     def format_lists(self, text):
-        # Ensure list items are on new lines with clear bullet points
-        # Using a distinct unicode bullet helps DeepL understand it's a list
-        return text.replace("[*]", "\n- ")
+        return text
 
     def post_process_markdown(self, text):
         """Repairs formatting that might have been broken by DeepL."""
-        # Fix Headers that lost their newlines (e.g. "Text. ## Header" -> "Text.\n\n## Header")
-        # Look for ## followed by text, not preceded by newline
-        text = re.sub(r'(?<!\n)## ', r'\n\n## ', text)
-        text = re.sub(r'(?<!\n)# ', r'\n\n# ', text)
-        text = re.sub(r'(?<!\n)### ', r'\n\n### ', text)
+        # 1. Fix Headers: Force newline before # if it's missing (DeepL loves to merge them)
+        # Look for a header that is NOT preceded by at least two newlines
+        text = re.sub(r'([^\n])\n?# ', r'\1\n\n# ', text)
+        text = re.sub(r'([^\n])\n?## ', r'\1\n\n## ', text)
+        text = re.sub(r'([^\n])\n?### ', r'\1\n\n### ', text)
         
-        # Fix Lists that merged (e.g. "Text - Item" -> "Text\n- Item")
-        # If - is at start of sentence but not line
-        text = re.sub(r'(?<!\n)- ', r'\n- ', text)
+        # 2. Fix Lists: Force newline before list items • or -
+        text = re.sub(r'([^\n])\n?• ', r'\1\n• ', text)
+        text = re.sub(r'([^\n])\n?- ', r'\1\n- ', text)
+
+        # 3. Ensure headers have a newline AFTER them too
+        text = re.sub(r'(#+ .+?)\n([^\n])', r'\1\n\n\2', text)
         
-        # Consolidate newlines again
-        text = re.sub(r'\n{3,}', '\n\n', text)
         return text
 
     @tasks.loop(minutes=15)
