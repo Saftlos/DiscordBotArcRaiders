@@ -331,9 +331,14 @@ class SteamNews(commands.Cog):
                     chunks.append(full_text[:split_index])
                     full_text = full_text[split_index:].lstrip()
 
-            # Add Source Link to the last chunk
+            # Add Source Link and Disclaimer to the last chunk
+            footer = ""
             if url:
-                 chunks[-1] += f"\n\n[Original Artikel auf Steam](<{url}>)"
+                 footer += f"\n\n[Original Artikel auf Steam](<{url}>)"
+            
+            footer += "\n_(Automatisch übersetzt mit DeepL)_"
+            
+            chunks[-1] += footer
 
             # 3. Send Chunks
             # Send all chunks except the last one comfortably
