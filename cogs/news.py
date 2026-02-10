@@ -382,7 +382,7 @@ class SteamNews(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         
         # Fetch more items (e.g., 5) and unlimited length
-        url = f"http://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid={self.app_id}&count=5&maxlength=0&format=json"
+        url = f"http://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid={self.app_id}&count=20&maxlength=0&format=json"
         
         try:
             async with aiohttp.ClientSession() as session:
