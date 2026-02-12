@@ -112,12 +112,10 @@ class SteamNews(commands.Cog):
         
         def _translate_sync():
             try:
-                # Use HTML tag handling which is often smarter for web content
                 result = self.translator.translate_text(
                     text,
                     target_lang="DE",
-                    glossary=self.glossary if self.glossary else None,
-                    tag_handling="html"
+                    glossary=self.glossary if self.glossary else None
                 )
                 return result.text
             except Exception as e:
@@ -147,106 +145,75 @@ class SteamNews(commands.Cog):
     def cog_unload(self):
         self.check_news.cancel()
 
-    def clean_html(self, raw_text):
+    def bbcode_to_markdown(self, raw_text):
+        """Converts Steam BBCode directly to Discord Markdown. No HTML intermediate."""
         # 1. Extract Images
         image_urls = []
-        img_matches = re.findall(r'\[img src="([^"]+)"\]', raw_text)
-        img_matches2 = re.findall(r'\[img\]\{STEAM_CLAN_IMAGE\}([^\[]+)\[/img\]', raw_text)
-        for img_path in img_matches:
-            clean_url = img_path.replace("{STEAM_CLAN_IMAGE}", "https://clan.cloudflare.steamstatic.com/images")
-            image_urls.append(clean_url)
-        for img_path in img_matches2:
-            image_urls.append(f"https://clan.cloudflare.steamstatic.com/images{img_path}")
+        for pattern in [
+            r'\[img src="([^"]+)"\]',
+            r'\[img\]\{STEAM_CLAN_IMAGE\}([^\[]+)\[/img\]',
+            r'\[img\](https?://[^\[]+)\[/img\]'
+        ]:
+            for img_path in re.findall(pattern, raw_text):
+                clean_url = img_path.replace("{STEAM_CLAN_IMAGE}", "https://clan.cloudflare.steamstatic.com/images")
+                image_urls.append(clean_url)
 
-        # 2. ESCAPE CONTENT FIRST
-        text = html.escape(raw_text)
+        text = raw_text
         
-        # 3. Remove images EARLY (before they get caught by other regexes)
-        text = re.sub(r'\[img.*?\[/img\]', '', text)
-        text = re.sub(r'\[img src=&quot;[^&]*&quot;\]', '', text)
+        # 2. Remove image tags (already extracted)
+        text = re.sub(r'\[img[^\]]*\].*?\[/img\]', '', text, flags=re.DOTALL)
+        text = re.sub(r'\[img src="[^"]*"\]', '', text)
+        text = re.sub(r'\[previewyoutube[^\]]*\].*?\[/previewyoutube\]', '', text, flags=re.DOTALL)
         
-        # 4. Process LISTS first — extract list items cleanly
-        # Convert [list][*]text[/*][/list] to <li>text</li> blocks
-        text = text.replace("[list]", "").replace("[/list]", "")
-        text = text.replace("[olist]", "").replace("[/olist]", "")
+        # 3. URLs -> markdown links (before we strip other tags)
+        def fix_url(match):
+            url = match.group(1).replace('"', '').strip()
+            content = match.group(2).strip()
+            return f'[{content}]({url})'
+        text = re.sub(r'\[url=([^\]]+)\](.*?)\[/url\]', fix_url, text, flags=re.DOTALL)
         
-        # Handle [*]...[/*] list items with regex to strip internal whitespace
-        def clean_list_item(match):
-            content = match.group(1).strip()
-            # Remove [p]/[br] from inside list items
-            content = re.sub(r'\[/?p\]', ' ', content)
-            content = re.sub(r'\[/?br\]', ' ', content)
-            content = re.sub(r'\s+', ' ', content).strip()
-            return f'<li>{content}</li>'
+        # 4. Headers -> **bold** with newlines
+        for tag in ['h1', 'h2', 'h3']:
+            def header_replace(match, t=tag):
+                content = match.group(1).strip()
+                return f'\n\n**{content}**\n'
+            text = re.sub(rf'\[{tag}\](.*?)\[/{tag}\]', header_replace, text, flags=re.DOTALL)
         
-        text = re.sub(r'\[\*\](.*?)\[/\*\]', clean_list_item, text, flags=re.DOTALL)
-        # Handle [*] without closing [/*] — content goes until next [*] or end
-        text = re.sub(r'\[\*\](.*?)(?=\[\*\]|\[/list\]|\[h[123]\]|$)', clean_list_item, text, flags=re.DOTALL)
+        # 5. Bold / Italic / Underline
+        text = re.sub(r'\[b\](.*?)\[/b\]', r'**\1**', text, flags=re.DOTALL)
+        text = re.sub(r'\[i\](.*?)\[/i\]', r'*\1*', text, flags=re.DOTALL)
+        text = re.sub(r'\[u\](.*?)\[/u\]', r'__\1__', text, flags=re.DOTALL)
         
-        # 5. Paragraphs and line breaks -> newlines
+        # 6. Lists -> bullet points
+        # Remove list container tags
+        text = re.sub(r'\[/?list\]', '', text)
+        text = re.sub(r'\[/?olist\]', '', text)
+        
+        # Remove optional closing [/*] tags
+        text = text.replace('[/*]', '')
+        
+        # Convert [*] to bullet character
+        # Each [*] starts a new bullet — content follows until next [*] or structure
+        text = re.sub(r'\[\*\]\s*', '\n• ', text)
+        
+        # 7. Paragraph and line breaks
         text = re.sub(r'\[/?p\]', '\n', text)
         text = re.sub(r'\[/?br\]', '\n', text)
         
-        # 6. Headers — add newlines to ensure separation
-        text = re.sub(r'\[h1\](.*?)\[/h1\]', r'\n\n<h1>\1</h1>\n\n', text, flags=re.DOTALL)
-        text = re.sub(r'\[h2\](.*?)\[/h2\]', r'\n\n<h2>\1</h2>\n\n', text, flags=re.DOTALL)
-        text = re.sub(r'\[h3\](.*?)\[/h3\]', r'\n\n<h3>\1</h3>\n\n', text, flags=re.DOTALL)
-        
-        # 7. Basic Formatting
-        text = re.sub(r'\[b\](.*?)\[/b\]', r'<b>\1</b>', text, flags=re.DOTALL)
-        text = re.sub(r'\[i\](.*?)\[/i\]', r'<i>\1</i>', text, flags=re.DOTALL)
-        text = re.sub(r'\[u\](.*?)\[/u\]', r'<u>\1</u>', text, flags=re.DOTALL)
-        
-        # 8. Urls -> <a href="...">...</a>
-        def fix_url(match):
-            url = match.group(1).replace('&quot;', '').replace('"', '').strip()
-            content = match.group(2)
-            return f'<a href="{url}">{content}</a>'
-            
-        text = re.sub(r'\[url=([^\]]+)\](.*?)\[/url\]', fix_url, text, flags=re.DOTALL)
-        
-        # 9. Remove remaining BBCode tags (catch-all — MUST be LAST!)
+        # 8. Remove any remaining BBCode tags
         text = re.sub(r'\[/?[a-zA-Z][^\]]*\]', '', text)
         
-        return text.strip(), image_urls
-
-    def html_to_discord_markdown(self, text):
-        """Converts the translated HTML back to Discord Markdown."""
-        
-        # 1. Headers -> Discord bold text (# doesn't work in Discord messages)
-        def format_header(match):
-            content = match.group(1).strip()
-            return f'\n\n**{content}**\n'
-        
-        text = re.sub(r'<h1>(.*?)</h1>', format_header, text, flags=re.DOTALL)
-        text = re.sub(r'<h2>(.*?)</h2>', format_header, text, flags=re.DOTALL)
-        text = re.sub(r'<h3>(.*?)</h3>', format_header, text, flags=re.DOTALL)
-        
-        # 2. Lists — extract content from <li> tags, strip whitespace
-        def format_list_item(match):
-            content = match.group(1).strip()
-            return f'\n• {content}'
-        
-        text = re.sub(r'<li>(.*?)</li>', format_list_item, text, flags=re.DOTALL)
-        text = text.replace("<ul>", "").replace("</ul>", "")
-        
-        # 3. Formatting
-        text = text.replace("<b>", "**").replace("</b>", "**")
-        text = text.replace("<i>", "*").replace("</i>", "*")
-        text = text.replace("<u>", "__").replace("</u>", "__")
-        
-        # 4. Links
-        text = re.sub(r'<a href="([^"]+)">(.*?)</a>', r'[\2](\1)', text, flags=re.DOTALL)
-        
-        # 5. Unescape content
+        # 9. Unescape HTML entities from raw text
         text = html.unescape(text)
         
-        # 6. Cleanup
-        text = re.sub(r'\n{3,}', '\n\n', text)  # Max 2 consecutive newlines
-        text = re.sub(r'[ \t]+\n', '\n', text)   # Trailing spaces
-        text = re.sub(r'\n[ \t]+\n', '\n\n', text) # Blank lines with only spaces
+        # 10. Cleanup whitespace
+        text = re.sub(r'[ \t]+\n', '\n', text)       # Trailing whitespace on lines
+        text = re.sub(r'\n[ \t]+\n', '\n\n', text)   # Lines with only whitespace
+        text = re.sub(r'\n{3,}', '\n\n', text)        # Max 2 consecutive newlines
+        # Fix bullets that have extra newlines before the text
+        text = re.sub(r'•\s*\n\s*', '• ', text)       # Bullet followed by newline -> single line
         
-        return text.strip()
+        return text.strip(), image_urls
 
     async def fetch_latest_news(self, count=5):
         """Holt die neuesten offiziellen News über die Steam Events API.
@@ -324,11 +291,10 @@ class SteamNews(commands.Cog):
         translated_title = await self.translate_text(news_item.get("title", "Neuigkeiten zu Arc Raiders"))
 
         # Parse content and extract images
-        contents, image_urls = self.clean_html(news_item.get("contents", ""))
+        contents, image_urls = self.bbcode_to_markdown(news_item.get("contents", ""))
         
-        # Translate Content (Text is HTML here)
-        translated_html = await self.translate_text(contents)
-        translated_contents = self.html_to_discord_markdown(translated_html)
+        # Translate Content (already in Discord Markdown)
+        translated_contents = await self.translate_text(contents)
         
         # Get URL
         url = news_item.get("url")
