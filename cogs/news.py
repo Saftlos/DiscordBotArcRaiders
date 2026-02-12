@@ -108,7 +108,9 @@ class SteamNews(commands.Cog):
                 # Split into lines and translate each non-empty line separately
                 # This preserves ALL line breaks perfectly (they never enter DeepL)
                 lines = text.split('\n')
-                non_empty = [(i, line) for i, line in enumerate(lines) if line.strip()]
+                # Skip empty lines AND image placeholders ({{IMG:N}}) — they must not be sent to DeepL
+                non_empty = [(i, line) for i, line in enumerate(lines) 
+                             if line.strip() and not re.match(r'^\{\{IMG:\d+\}\}$', line.strip())]
                 
                 if not non_empty:
                     return text
@@ -188,22 +190,26 @@ class SteamNews(commands.Cog):
 
     def bbcode_to_markdown(self, raw_text):
         """Converts Steam BBCode directly to Discord Markdown. No HTML intermediate."""
-        # 1. Extract Images
-        image_urls = []
-        for pattern in [
-            r'\[img src="([^"]+)"\]',
-            r'\[img\]\{STEAM_CLAN_IMAGE\}([^\[]+)\[/img\]',
-            r'\[img\](https?://[^\[]+)\[/img\]'
-        ]:
-            for img_path in re.findall(pattern, raw_text):
-                clean_url = img_path.replace("{STEAM_CLAN_IMAGE}", "https://clan.cloudflare.steamstatic.com/images")
-                image_urls.append(clean_url)
-
         text = raw_text
         
-        # 2. Remove image tags (already extracted)
+        # 1. Replace image tags with inline placeholders {{IMG:N}}
+        image_urls = []
+        def img_placeholder(match):
+            # Extract URL from whichever group matched
+            url = match.group(1) if match.group(1) else ''
+            url = url.replace("{STEAM_CLAN_IMAGE}", "https://clan.cloudflare.steamstatic.com/images")
+            if url:
+                idx = len(image_urls)
+                image_urls.append(url)
+                return f'\n{{{{IMG:{idx}}}}}\n'
+            return ''
+        
+        # Match all image patterns and replace with placeholders
+        text = re.sub(r'\[img\]\{STEAM_CLAN_IMAGE\}([^\[]+)\[/img\]', img_placeholder, text)
+        text = re.sub(r'\[img\](https?://[^\[]+)\[/img\]', img_placeholder, text)
+        text = re.sub(r'\[img src="([^"]+)"\]', img_placeholder, text)
+        # Remove any remaining unmatched image tags
         text = re.sub(r'\[img[^\]]*\].*?\[/img\]', '', text, flags=re.DOTALL)
-        text = re.sub(r'\[img src="[^"]*"\]', '', text)
         text = re.sub(r'\[previewyoutube[^\]]*\].*?\[/previewyoutube\]', '', text, flags=re.DOTALL)
         
         # 3. URLs -> markdown links (before we strip other tags)
@@ -331,72 +337,81 @@ class SteamNews(commands.Cog):
         # Translate Title
         translated_title = await self.translate_text(news_item.get("title", "Neuigkeiten zu Arc Raiders"))
 
-        # Parse content and extract images
+        # Parse content and extract images (with inline {{IMG:N}} placeholders)
         contents, image_urls = self.bbcode_to_markdown(news_item.get("contents", ""))
         
         # Translate Content (already in Discord Markdown)
+        # Image placeholders like {{IMG:0}} survive translation because they're not real words
         translated_contents = await self.translate_text(contents)
         
         # Get URL
         url = news_item.get("url")
         
-        # Header Message
+        # Header
         header = ""
         if ping_role:
              header += "<@&1466986718229041204>\n\n"
-             
         header += f"**{translated_title}**\n\n"
         
-        # Split content into chunks of 1900 chars
         full_text = header + translated_contents
-        chunks = []
+        
+        # Footer
+        footer = ""
+        if url:
+            footer += f"\n\n[Original Artikel auf Steam](<{url}>)"
+        footer += "\n_(Automatisch übersetzt mit DeepL)_"
+        full_text += footer
         
         try:
-            # 1. Download and Prepare Images as Files
-            files_to_send = []
+            # 1. Download ALL images upfront
+            downloaded_images = {}  # idx -> bytes
             if image_urls:
                 async with aiohttp.ClientSession() as session:
-                    # Limit to 10 images (Discord attachment limit)
                     for i, img_url in enumerate(image_urls[:10]):
                         try:
                             async with session.get(img_url) as resp:
                                 if resp.status == 200:
-                                    data = await resp.read()
-                                    from io import BytesIO
-                                    file_obj = discord.File(BytesIO(data), filename=f"image_{i}.jpg")
-                                    files_to_send.append(file_obj)
+                                    downloaded_images[i] = await resp.read()
                         except Exception as e:
                             print(f"Fehler beim Herunterladen des Bildes {img_url}: {e}")
 
-            # 2. Split Text
-            while full_text:
-                if len(full_text) <= 1900:
-                    chunks.append(full_text)
-                    break
+            # 2. Split text at image placeholders into segments
+            #    Each segment is either text or an image index
+            segments = []  # list of (type, content) where type is 'text' or 'image'
+            import re as _re
+            parts = _re.split(r'\{\{IMG:(\d+)\}\}', full_text)
+            # parts alternates: [text, img_idx, text, img_idx, text, ...]
+            for j, part in enumerate(parts):
+                if j % 2 == 0:
+                    # Text segment
+                    cleaned = part.strip()
+                    if cleaned:
+                        segments.append(('text', cleaned))
                 else:
-                    split_index = full_text.rfind('\n', 0, 1900)
-                    if split_index == -1: split_index = full_text.rfind(' ', 0, 1900)
-                    if split_index == -1: split_index = 1900
-                    chunks.append(full_text[:split_index])
-                    full_text = full_text[split_index:].lstrip()
-
-            # Add Source Link and Disclaimer to the last chunk
-            footer = ""
-            if url:
-                 footer += f"\n\n[Original Artikel auf Steam](<{url}>)"
+                    # Image index
+                    segments.append(('image', int(part)))
             
-            footer += "\n_(Automatisch übersetzt mit DeepL)_"
-            
-            chunks[-1] += footer
-
-            # 3. Send Chunks
-            # Send all chunks except the last one comfortably
-            for chunk in chunks[:-1]:
-                await channel.send(content=chunk)
-            
-            # Send the last chunk WITH the files (images)
-            if chunks:
-                await channel.send(content=chunks[-1], files=files_to_send)
+            # 3. Send segments in order
+            for seg_type, seg_content in segments:
+                if seg_type == 'text':
+                    # Split long text into 1900-char chunks
+                    text_remaining = seg_content
+                    while text_remaining:
+                        if len(text_remaining) <= 1900:
+                            await channel.send(content=text_remaining)
+                            break
+                        else:
+                            split_idx = text_remaining.rfind('\n', 0, 1900)
+                            if split_idx == -1: split_idx = text_remaining.rfind(' ', 0, 1900)
+                            if split_idx == -1: split_idx = 1900
+                            await channel.send(content=text_remaining[:split_idx])
+                            text_remaining = text_remaining[split_idx:].lstrip()
+                elif seg_type == 'image':
+                    img_idx = seg_content
+                    if img_idx in downloaded_images:
+                        from io import BytesIO
+                        file_obj = discord.File(BytesIO(downloaded_images[img_idx]), filename=f"image_{img_idx}.jpg")
+                        await channel.send(file=file_obj)
             
             print(f"Neue News gepostet: {translated_title}")
 
