@@ -148,6 +148,7 @@ class SteamNews(commands.Cog):
                 
                 results = self.translator.translate_text(
                     texts_to_translate,
+                    source_lang="EN",
                     target_lang="DE",
                     glossary=glossary_to_use
                 )
