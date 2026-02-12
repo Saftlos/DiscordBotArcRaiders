@@ -185,8 +185,10 @@ class SteamNews(commands.Cog):
         except Exception as e:
             print(f"Error saving news state: {e}")
 
-    def cog_unload(self):
+    async def cog_unload(self):
         self.check_news.cancel()
+        if hasattr(self, '_session') and self._session and not self._session.closed:
+            await self._session.close()
 
     def bbcode_to_markdown(self, raw_text):
         """Converts Steam BBCode directly to Discord Markdown. No HTML intermediate."""
@@ -262,10 +264,16 @@ class SteamNews(commands.Cog):
         
         return text.strip(), image_urls
 
+    async def get_session(self):
+        """Returns a cached aiohttp session, creating one if needed."""
+        if not hasattr(self, '_session') or self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
+
     async def fetch_latest_news(self, count=5):
         """Holt die neuesten offiziellen News über die Steam Events API.
         Gibt bei count=1 ein einzelnes Dict zurück, bei count>1 eine Liste.
-        Dict-Format: {gid, title, contents, url}
+        Dict-Format: {gid, title, contents, url, header_image}
         """
         events_url = (
             f"https://store.steampowered.com/events/ajaxgetpartnereventspageable/"
@@ -273,41 +281,57 @@ class SteamNews(commands.Cog):
         )
         
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(events_url) as response:
-                    if response.status != 200:
-                        print(f"Steam Events API gab Status zurück: {response.status}")
-                        return None
+            session = await self.get_session()
+            async with session.get(events_url) as response:
+                if response.status != 200:
+                    print(f"Steam Events API gab Status zurück: {response.status}")
+                    return None
+                
+                data = await response.json()
+                
+                if not data.get("success"):
+                    print("Steam Events API: Anfrage nicht erfolgreich.")
+                    return None
+                
+                events = data.get("events", [])
+                if not events:
+                    print("Keine Events in der Steam Events API gefunden.")
+                    return None
+                
+                results = []
+                for event in events:
+                    ann = event.get("announcement_body", {})
+                    gid = str(ann.get("gid", ""))
+                    title = ann.get("headline", "Neuigkeiten zu Arc Raiders")
+                    body = ann.get("body", "")
+                    clan_id = ann.get("clanid", "")
+                    news_url = f"https://store.steampowered.com/news/app/{self.app_id}/view/{gid}"
                     
-                    data = await response.json()
+                    # Extract header/banner image from jsondata
+                    header_image = None
+                    try:
+                        jsondata = json.loads(event.get("jsondata", "{}"))
+                        title_images = jsondata.get("localized_title_image", [])
+                        if isinstance(title_images, list) and title_images:
+                            # Index 0 = english
+                            img_hash = title_images[0]
+                            if img_hash and clan_id:
+                                header_image = f"https://clan.cloudflare.steamstatic.com/images/{clan_id}/{img_hash}"
+                    except Exception:
+                        pass
                     
-                    if not data.get("success"):
-                        print("Steam Events API: Anfrage nicht erfolgreich.")
-                        return None
-                    
-                    events = data.get("events", [])
-                    if not events:
-                        print("Keine Events in der Steam Events API gefunden.")
-                        return None
-                    
-                    results = []
-                    for event in events:
-                        ann = event.get("announcement_body", {})
-                        gid = str(ann.get("gid", ""))
-                        title = ann.get("headline", "Neuigkeiten zu Arc Raiders")
-                        body = ann.get("body", "")
-                        news_url = f"https://store.steampowered.com/news/app/{self.app_id}/view/{gid}"
-                        results.append({
-                            "gid": gid,
-                            "title": title,
-                            "contents": body,
-                            "url": news_url,
-                        })
-                    
-                    # Rückwärtskompatibel: bei count<=1 einzelnes Dict
-                    if count <= 1:
-                        return results[0] if results else None
-                    return results
+                    results.append({
+                        "gid": gid,
+                        "title": title,
+                        "contents": body,
+                        "url": news_url,
+                        "header_image": header_image,
+                    })
+                
+                # Rückwärtskompatibel: bei count<=1 einzelnes Dict
+                if count <= 1:
+                    return results[0] if results else None
+                return results
                     
         except Exception as e:
             print(f"Fehler beim Abrufen der Steam Events: {e}")
@@ -341,11 +365,11 @@ class SteamNews(commands.Cog):
         contents, image_urls = self.bbcode_to_markdown(news_item.get("contents", ""))
         
         # Translate Content (already in Discord Markdown)
-        # Image placeholders like {{IMG:0}} survive translation because they're not real words
         translated_contents = await self.translate_text(contents)
         
-        # Get URL
+        # Get URL and header image
         url = news_item.get("url")
+        header_image_url = news_item.get("header_image")
         
         # Header
         header = ""
@@ -363,38 +387,48 @@ class SteamNews(commands.Cog):
         full_text += footer
         
         try:
-            # 1. Download ALL images upfront
-            downloaded_images = {}  # idx -> bytes
-            if image_urls:
-                async with aiohttp.ClientSession() as session:
-                    for i, img_url in enumerate(image_urls[:10]):
-                        try:
-                            async with session.get(img_url) as resp:
-                                if resp.status == 200:
-                                    downloaded_images[i] = await resp.read()
-                        except Exception as e:
-                            print(f"Fehler beim Herunterladen des Bildes {img_url}: {e}")
+            session = await self.get_session()
+            
+            # 1. Download header banner image
+            header_file = None
+            if header_image_url:
+                try:
+                    async with session.get(header_image_url) as resp:
+                        if resp.status == 200:
+                            from io import BytesIO
+                            header_data = await resp.read()
+                            header_file = discord.File(BytesIO(header_data), filename="header.jpg")
+                except Exception as e:
+                    print(f"Fehler beim Herunterladen des Header-Banners: {e}")
+            
+            # 2. Download ALL inline images upfront
+            downloaded_images = {}
+            for i, img_url in enumerate(image_urls[:10]):
+                try:
+                    async with session.get(img_url) as resp:
+                        if resp.status == 200:
+                            downloaded_images[i] = await resp.read()
+                except Exception as e:
+                    print(f"Fehler beim Herunterladen des Bildes {img_url}: {e}")
 
-            # 2. Split text at image placeholders into segments
-            #    Each segment is either text or an image index
-            segments = []  # list of (type, content) where type is 'text' or 'image'
-            import re as _re
-            parts = _re.split(r'\{\{IMG:(\d+)\}\}', full_text)
-            # parts alternates: [text, img_idx, text, img_idx, text, ...]
+            # 3. Send header banner first (if available)
+            if header_file:
+                await channel.send(file=header_file)
+
+            # 4. Split text at image placeholders into segments
+            segments = []
+            parts = re.split(r'\{\{IMG:(\d+)\}\}', full_text)
             for j, part in enumerate(parts):
                 if j % 2 == 0:
-                    # Text segment
                     cleaned = part.strip()
                     if cleaned:
                         segments.append(('text', cleaned))
                 else:
-                    # Image index
                     segments.append(('image', int(part)))
             
-            # 3. Send segments in order
+            # 5. Send segments in order
             for seg_type, seg_content in segments:
                 if seg_type == 'text':
-                    # Split long text into 1900-char chunks
                     text_remaining = seg_content
                     while text_remaining:
                         if len(text_remaining) <= 1900:
@@ -465,100 +499,6 @@ class SteamNews(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"Fehler: {e}", ephemeral=True)
 
-    # ── /patchnotes Command ──────────────────────────────────────
-
-    @app_commands.command(name="patchnotes", description="Zeigt die letzten Patch Notes von Steam an")
-    async def patchnotes(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        
-        try:
-            news_list = await self.fetch_latest_news(count=5)
-            
-            if not news_list:
-                await interaction.followup.send("❌ Keine Patch Notes gefunden.", ephemeral=True)
-                return
-            
-            # Select Menu erstellen
-            view = PatchNotesView(news_list, self)
-            
-            embed = discord.Embed(
-                title="📋 Patch Notes",
-                description="Wähle eine News aus dem Dropdown-Menü:",
-                color=discord.Color.blue()
-            )
-            
-            for i, news in enumerate(news_list):
-                title = news.get('title', 'Unbekannt')
-                if len(title) > 60:
-                    title = title[:57] + "..."
-                embed.add_field(
-                    name=f"{i+1}. {title}",
-                    value=f"[Auf Steam lesen]({news.get('url', '#')})",
-                    inline=False
-                )
-            
-            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-            
-        except Exception as e:
-            await interaction.followup.send(f"❌ Fehler: {e}", ephemeral=True)
-
-
-class PatchNotesSelect(discord.ui.Select):
-    def __init__(self, news_list, cog):
-        self.news_list = news_list
-        self.cog = cog
-        
-        options = []
-        for i, news in enumerate(news_list):
-            title = news.get('title', 'Unbekannt')
-            if len(title) > 95:
-                title = title[:92] + "..."
-            options.append(discord.SelectOption(
-                label=title,
-                value=str(i),
-                description=f"News #{i+1}"
-            ))
-        
-        super().__init__(
-            placeholder="📰 Wähle eine News...",
-            options=options,
-            min_values=1,
-            max_values=1
-        )
-    
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        
-        index = int(self.values[0])
-        news = self.news_list[index]
-        
-        title = news.get('title', 'Patch Notes')
-        body = news.get('contents', '')
-        url = news.get('url', '')
-        
-        # BBCode zu lesbarem Text konvertieren (ohne Übersetzung)
-        cleaned, _ = self.cog.clean_html(body)
-        content = self.cog.html_to_discord_markdown(cleaned)
-        
-        # Auf 4000 Zeichen begrenzen (Embed-Limit)
-        if len(content) > 4000:
-            content = content[:3997] + "..."
-        
-        embed = discord.Embed(
-            title=f"📰 {title}",
-            description=content,
-            color=discord.Color.blue(),
-            url=url
-        )
-        embed.set_footer(text="Quelle: Steam | Originalsprache (Englisch)")
-        
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-
-class PatchNotesView(discord.ui.View):
-    def __init__(self, news_list, cog):
-        super().__init__(timeout=300)
-        self.add_item(PatchNotesSelect(news_list, cog))
 
 async def setup(bot):
     await bot.add_cog(SteamNews(bot))
