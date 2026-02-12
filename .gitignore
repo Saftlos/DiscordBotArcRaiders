@@ -16,7 +16,6 @@ venv.bak
 
 # Project Specific
 data/news_state.json
-config.json
 # data/mutes.json # Uncomment if you don't want to sync mutable data
 debug_*.py
 *_debug.json

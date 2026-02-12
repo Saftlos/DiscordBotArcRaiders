@@ -56,9 +56,9 @@ class Admin(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         try:
-            # 1. Git Pull ausführen
+            # 1. Git Fetch + Reset (übernimmt immer die GitHub-Version, keine Konflikte)
             process = await asyncio.create_subprocess_shell(
-                "git pull",
+                "git fetch origin && git reset --hard origin/main",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
