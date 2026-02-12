@@ -58,7 +58,12 @@ class SteamNews(commands.Cog):
             return
 
         # Prepare Glossary Entries (Source = Target for DNT)
-        entries = {term: term for term in terms}
+        # DeepL glossary is CASE-SENSITIVE, so we need multiple variants
+        entries = {}
+        for term in terms:
+            entries[term] = term                 # Original: "Shared Watch" -> "Shared Watch"
+            entries[term.upper()] = term         # UPPERCASE: "SHARED WATCH" -> "Shared Watch"
+            entries[term.lower()] = term         # lowercase: "shared watch" -> "Shared Watch"
         glossary_name = "ArcRaiders_Glossary"
         
         try:
