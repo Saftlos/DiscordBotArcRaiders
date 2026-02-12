@@ -112,20 +112,29 @@ class SteamNews(commands.Cog):
         
         def _translate_sync():
             try:
-                # Preserve line breaks through translation using <br/> tags
-                preserved = text.replace('\n', '<br/>\n')
-                result = self.translator.translate_text(
-                    preserved,
+                # Split into lines and translate each non-empty line separately
+                # This preserves ALL line breaks perfectly (they never enter DeepL)
+                lines = text.split('\n')
+                non_empty = [(i, line) for i, line in enumerate(lines) if line.strip()]
+                
+                if not non_empty:
+                    return text
+                
+                texts_to_translate = [line for _, line in non_empty]
+                
+                # DeepL accepts a list — one API call for all lines
+                results = self.translator.translate_text(
+                    texts_to_translate,
                     target_lang="DE",
-                    glossary=self.glossary if self.glossary else None,
-                    tag_handling="html"
+                    glossary=self.glossary if self.glossary else None
                 )
-                # Restore newlines — DeepL preserves <br/> tags
-                translated = result.text
-                translated = translated.replace('<br/>\n', '\n')
-                translated = translated.replace('<br/>', '\n')
-                translated = translated.replace('<br>', '\n')
-                return translated
+                
+                # Reassemble with translations in the correct positions
+                translated_lines = list(lines)
+                for (idx, _), result in zip(non_empty, results):
+                    translated_lines[idx] = result.text
+                
+                return '\n'.join(translated_lines)
             except Exception as e:
                 print(f"Translation failed: {e}")
                 return text
