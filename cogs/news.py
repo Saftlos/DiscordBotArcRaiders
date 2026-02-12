@@ -125,7 +125,31 @@ class SteamNews(commands.Cog):
                 if not non_empty:
                     return text
                 
-                texts_to_translate = [line for _, line in non_empty]
+                # Strip markdown formatting before translation so glossary can match
+                texts_to_translate = []
+                line_formats = []  # (prefix, suffix) to re-apply after translation
+                for _, line in non_empty:
+                    stripped = line
+                    prefix = ''
+                    suffix = ''
+                    
+                    # Pattern: • **bold text** (bullet + bold header)
+                    if stripped.startswith('• **') and stripped.endswith('**'):
+                        prefix = '• **'
+                        suffix = '**'
+                        stripped = stripped[4:-2]
+                    # Pattern: **bold text** (standalone header)
+                    elif stripped.startswith('**') and stripped.endswith('**'):
+                        prefix = '**'
+                        suffix = '**'
+                        stripped = stripped[2:-2]
+                    # Pattern: • text (plain bullet)
+                    elif stripped.startswith('• '):
+                        prefix = '• '
+                        stripped = stripped[2:]
+                    
+                    texts_to_translate.append(stripped)
+                    line_formats.append((prefix, suffix))
                 
                 # DeepL accepts a list — one API call for all lines
                 results = self.translator.translate_text(
@@ -134,10 +158,10 @@ class SteamNews(commands.Cog):
                     glossary=self.glossary if self.glossary else None
                 )
                 
-                # Reassemble with translations in the correct positions
+                # Reassemble with formatting and translations in the correct positions
                 translated_lines = list(lines)
-                for (idx, _), result in zip(non_empty, results):
-                    translated_lines[idx] = result.text
+                for (idx, _), result, (prefix, suffix) in zip(non_empty, results, line_formats):
+                    translated_lines[idx] = f'{prefix}{result.text}{suffix}'
                 
                 return '\n'.join(translated_lines)
             except Exception as e:
