@@ -161,29 +161,43 @@ class SteamNews(commands.Cog):
         # 2. ESCAPE CONTENT FIRST
         text = html.escape(raw_text)
         
-        # 3. Apply Structure Tags
+        # 3. Remove images EARLY (before they get caught by other regexes)
+        text = re.sub(r'\[img.*?\[/img\]', '', text)
+        text = re.sub(r'\[img src=&quot;[^&]*&quot;\]', '', text)
         
-        # Paragraphs and line breaks -> newlines (MUST be before catch-all!)
+        # 4. Process LISTS first — extract list items cleanly
+        # Convert [list][*]text[/*][/list] to <li>text</li> blocks
+        text = text.replace("[list]", "").replace("[/list]", "")
+        text = text.replace("[olist]", "").replace("[/olist]", "")
+        
+        # Handle [*]...[/*] list items with regex to strip internal whitespace
+        def clean_list_item(match):
+            content = match.group(1).strip()
+            # Remove [p]/[br] from inside list items
+            content = re.sub(r'\[/?p\]', ' ', content)
+            content = re.sub(r'\[/?br\]', ' ', content)
+            content = re.sub(r'\s+', ' ', content).strip()
+            return f'<li>{content}</li>'
+        
+        text = re.sub(r'\[\*\](.*?)\[/\*\]', clean_list_item, text, flags=re.DOTALL)
+        # Handle [*] without closing [/*] — content goes until next [*] or end
+        text = re.sub(r'\[\*\](.*?)(?=\[\*\]|\[/list\]|\[h[123]\]|$)', clean_list_item, text, flags=re.DOTALL)
+        
+        # 5. Paragraphs and line breaks -> newlines
         text = re.sub(r'\[/?p\]', '\n', text)
         text = re.sub(r'\[/?br\]', '\n', text)
         
-        # Lists (including ordered lists)
-        text = text.replace("[list]", "<ul>").replace("[/list]", "</ul>")
-        text = text.replace("[olist]", "<ul>").replace("[/olist]", "</ul>")
-        text = text.replace("[*]", "<li>")
-        text = text.replace("[/*]", "</li>")
-        
-        # Headers — add newlines to ensure separation from surrounding text
+        # 6. Headers — add newlines to ensure separation
         text = re.sub(r'\[h1\](.*?)\[/h1\]', r'\n\n<h1>\1</h1>\n\n', text, flags=re.DOTALL)
         text = re.sub(r'\[h2\](.*?)\[/h2\]', r'\n\n<h2>\1</h2>\n\n', text, flags=re.DOTALL)
         text = re.sub(r'\[h3\](.*?)\[/h3\]', r'\n\n<h3>\1</h3>\n\n', text, flags=re.DOTALL)
         
-        # Basic Formatting
+        # 7. Basic Formatting
         text = re.sub(r'\[b\](.*?)\[/b\]', r'<b>\1</b>', text, flags=re.DOTALL)
         text = re.sub(r'\[i\](.*?)\[/i\]', r'<i>\1</i>', text, flags=re.DOTALL)
         text = re.sub(r'\[u\](.*?)\[/u\]', r'<u>\1</u>', text, flags=re.DOTALL)
         
-        # Urls -> <a href="...">...</a>
+        # 8. Urls -> <a href="...">...</a>
         def fix_url(match):
             url = match.group(1).replace('&quot;', '').replace('"', '').strip()
             content = match.group(2)
@@ -191,11 +205,7 @@ class SteamNews(commands.Cog):
             
         text = re.sub(r'\[url=([^\]]+)\](.*?)\[/url\]', fix_url, text, flags=re.DOTALL)
         
-        # Remove images (already extracted)
-        text = re.sub(r'\[img.*?\[/img\]', '', text)
-        text = re.sub(r'\[img src="[^"]*"\]', '', text)
-        
-        # Remove remaining BBCode tags (catch-all — MUST be LAST!)
+        # 9. Remove remaining BBCode tags (catch-all — MUST be LAST!)
         text = re.sub(r'\[/?[a-zA-Z][^\]]*\]', '', text)
         
         return text.strip(), image_urls
@@ -203,31 +213,38 @@ class SteamNews(commands.Cog):
     def html_to_discord_markdown(self, text):
         """Converts the translated HTML back to Discord Markdown."""
         
-        # 1. Remove structure tags and replace with Markdown
+        # 1. Headers -> Discord bold text (# doesn't work in Discord messages)
+        def format_header(match):
+            content = match.group(1).strip()
+            return f'\n\n**{content}**\n'
         
-        # Headers
-        text = text.replace("<h1>", "\n\n# ").replace("</h1>", "\n\n")
-        text = text.replace("<h2>", "\n\n## ").replace("</h2>", "\n\n")
-        text = text.replace("<h3>", "\n\n### ").replace("</h3>", "\n\n")
+        text = re.sub(r'<h1>(.*?)</h1>', format_header, text, flags=re.DOTALL)
+        text = re.sub(r'<h2>(.*?)</h2>', format_header, text, flags=re.DOTALL)
+        text = re.sub(r'<h3>(.*?)</h3>', format_header, text, flags=re.DOTALL)
         
-        # Lists
+        # 2. Lists — extract content from <li> tags, strip whitespace
+        def format_list_item(match):
+            content = match.group(1).strip()
+            return f'\n• {content}'
+        
+        text = re.sub(r'<li>(.*?)</li>', format_list_item, text, flags=re.DOTALL)
         text = text.replace("<ul>", "").replace("</ul>", "")
-        text = text.replace("<li>", "\n- ").replace("</li>", "")
         
-        # Formatting
+        # 3. Formatting
         text = text.replace("<b>", "**").replace("</b>", "**")
         text = text.replace("<i>", "*").replace("</i>", "*")
         text = text.replace("<u>", "__").replace("</u>", "__")
         
-        # Links
-        # We process links BEFORE unescaping to avoid breaking the HTML structure if the text contained tags
+        # 4. Links
         text = re.sub(r'<a href="([^"]+)">(.*?)</a>', r'[\2](\1)', text, flags=re.DOTALL)
         
-        # 2. Unescape content
+        # 5. Unescape content
         text = html.unescape(text)
         
-        # Cleanup extra newlines
-        text = re.sub(r'\n{3,}', '\n\n', text)
+        # 6. Cleanup
+        text = re.sub(r'\n{3,}', '\n\n', text)  # Max 2 consecutive newlines
+        text = re.sub(r'[ \t]+\n', '\n', text)   # Trailing spaces
+        text = re.sub(r'\n[ \t]+\n', '\n\n', text) # Blank lines with only spaces
         
         return text.strip()
 
