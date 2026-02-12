@@ -151,45 +151,52 @@ class SteamNews(commands.Cog):
         # 1. Extract Images
         image_urls = []
         img_matches = re.findall(r'\[img src="([^"]+)"\]', raw_text)
+        img_matches2 = re.findall(r'\[img\]\{STEAM_CLAN_IMAGE\}([^\[]+)\[/img\]', raw_text)
         for img_path in img_matches:
             clean_url = img_path.replace("{STEAM_CLAN_IMAGE}", "https://clan.cloudflare.steamstatic.com/images")
             image_urls.append(clean_url)
+        for img_path in img_matches2:
+            image_urls.append(f"https://clan.cloudflare.steamstatic.com/images{img_path}")
 
         # 2. ESCAPE CONTENT FIRST
         text = html.escape(raw_text)
         
         # 3. Apply Structure Tags
         
-        # Lists
+        # Paragraphs and line breaks -> newlines (MUST be before catch-all!)
+        text = re.sub(r'\[/?p\]', '\n', text)
+        text = re.sub(r'\[/?br\]', '\n', text)
+        
+        # Lists (including ordered lists)
         text = text.replace("[list]", "<ul>").replace("[/list]", "</ul>")
+        text = text.replace("[olist]", "<ul>").replace("[/olist]", "</ul>")
         text = text.replace("[*]", "<li>")
         text = text.replace("[/*]", "</li>")
         
-        # Headers
-        text = re.sub(r'\[h1\](.*?)\[/h1\]', r'<h1>\1</h1>', text)
-        text = re.sub(r'\[h2\](.*?)\[/h2\]', r'<h2>\1</h2>', text)
-        text = re.sub(r'\[h3\](.*?)\[/h3\]', r'<h3>\1</h3>', text)
+        # Headers — add newlines to ensure separation from surrounding text
+        text = re.sub(r'\[h1\](.*?)\[/h1\]', r'\n\n<h1>\1</h1>\n\n', text, flags=re.DOTALL)
+        text = re.sub(r'\[h2\](.*?)\[/h2\]', r'\n\n<h2>\1</h2>\n\n', text, flags=re.DOTALL)
+        text = re.sub(r'\[h3\](.*?)\[/h3\]', r'\n\n<h3>\1</h3>\n\n', text, flags=re.DOTALL)
         
         # Basic Formatting
-        text = re.sub(r'\[b\](.*?)\[/b\]', r'<b>\1</b>', text)
-        text = re.sub(r'\[i\](.*?)\[/i\]', r'<i>\1</i>', text)
-        text = re.sub(r'\[u\](.*?)\[/u\]', r'<u>\1</u>', text)
+        text = re.sub(r'\[b\](.*?)\[/b\]', r'<b>\1</b>', text, flags=re.DOTALL)
+        text = re.sub(r'\[i\](.*?)\[/i\]', r'<i>\1</i>', text, flags=re.DOTALL)
+        text = re.sub(r'\[u\](.*?)\[/u\]', r'<u>\1</u>', text, flags=re.DOTALL)
         
         # Urls -> <a href="...">...</a>
-        # Fix: Remove quotes from the URL capture group if they exist
-        # [url="http..."] -> \1="http..." -> we want http...
         def fix_url(match):
             url = match.group(1).replace('&quot;', '').replace('"', '').strip()
             content = match.group(2)
             return f'<a href="{url}">{content}</a>'
             
-        text = re.sub(r'\[url=([^\]]+)\](.*?)\[/url\]', fix_url, text)
+        text = re.sub(r'\[url=([^\]]+)\](.*?)\[/url\]', fix_url, text, flags=re.DOTALL)
         
-        # Cleanups
+        # Remove images (already extracted)
         text = re.sub(r'\[img.*?\[/img\]', '', text)
-        text = re.sub(r'\[.*?\]', '', text) 
-        text = re.sub(r'\[/?p\]', '\n', text)
-        text = re.sub(r'\[/?br\]', '\n', text)
+        text = re.sub(r'\[img src="[^"]*"\]', '', text)
+        
+        # Remove remaining BBCode tags (catch-all — MUST be LAST!)
+        text = re.sub(r'\[/?[a-zA-Z][^\]]*\]', '', text)
         
         return text.strip(), image_urls
 
