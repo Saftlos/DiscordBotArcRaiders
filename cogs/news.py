@@ -56,6 +56,8 @@ class SteamNews(commands.Cog):
         if not terms:
             print("No glossary terms found.")
             return
+        
+        print(f"📖 Glossar: {len(terms)} Begriffe aus glossary.json geladen.")
 
         # Prepare Glossary Entries (Source = Target for DNT)
         # DeepL glossary is CASE-SENSITIVE, so we need multiple variants
@@ -64,30 +66,29 @@ class SteamNews(commands.Cog):
             entries[term] = term                 # Original: "Shared Watch" -> "Shared Watch"
             entries[term.upper()] = term         # UPPERCASE: "SHARED WATCH" -> "Shared Watch"
             entries[term.lower()] = term         # lowercase: "shared watch" -> "Shared Watch"
+        
+        print(f"📖 Glossar: {len(entries)} Einträge (mit Case-Varianten) vorbereitet.")
         glossary_name = "ArcRaiders_Glossary"
         
         try:
             # 1. List existing glossaries
             existing_glossaries = self.translator.list_glossaries()
+            print(f"📖 Glossar: {len(existing_glossaries)} existierende Glossare gefunden.")
             
             # 2. Check if our glossary already exists
             existing_glossary = None
             for g in existing_glossaries:
+                print(f"  - Glossar: {g.name} ({g.entry_count} Einträge, ID: {g.glossary_id})")
                 if g.name == glossary_name:
                     existing_glossary = g
-                    break
             
             if existing_glossary:
-                print(f"DeepL Glossary found: {existing_glossary.name} ({existing_glossary.entry_count} entries). REMOVING and RECREATING to update terms.")
-                # We MUST delete and recreate to update terms locally
+                print(f"📖 Altes Glossar gefunden, wird gelöscht und neu erstellt...")
                 try:
                     self.translator.delete_glossary(existing_glossary)
-                    print("Altes Glossar gelöscht.")
+                    print("✅ Altes Glossar gelöscht.")
                 except Exception as e:
-                    print(f"Fehler beim Löschen des alten Glossars (Limit erreicht?): {e}")
-                    # If we can't delete, we might as well try to use it? 
-                    # But if we use it, we miss new terms.
-                    # If we are quota limited, we might be forced to use it.
+                    print(f"❌ Fehler beim Löschen des alten Glossars: {e}")
                     self.glossary = existing_glossary
                     return
 
@@ -99,17 +100,12 @@ class SteamNews(commands.Cog):
                     target_lang="DE",
                     entries=entries
                 )
-                print(f"DeepL Glossar erstellt: {self.glossary.name} ({self.glossary.entry_count} Einträge)")
-            except deepl.QuotaExceededException:
-                 print("Kritisch: DeepL Quota bei Erstellung überschritten. Falle zurück auf KEIN Glossar oder existierendes.")
-                 # If we failed to create but had one (that we deleted? oops), we are in trouble.
-                 # If we failed to create because we didn't delete the old one, we should have found it above.
-                 
+                print(f"✅ DeepL Glossar erstellt: {self.glossary.name} ({self.glossary.entry_count} Einträge, ID: {self.glossary.glossary_id})")
             except Exception as e:
-                print(f"Fehler beim Erstellen des Glossars: {e}")
+                print(f"❌ Fehler beim Erstellen des Glossars: {type(e).__name__}: {e}")
             
         except Exception as e:
-            print(f"Fehler beim Verwalten des DeepL Glossars: {e}")
+            print(f"❌ Fehler beim Verwalten des DeepL Glossars: {type(e).__name__}: {e}")
 
     async def translate_text(self, text):
         if not self.translator: return text
@@ -152,10 +148,16 @@ class SteamNews(commands.Cog):
                     line_formats.append((prefix, suffix))
                 
                 # DeepL accepts a list — one API call for all lines
+                glossary_to_use = self.glossary if self.glossary else None
+                if glossary_to_use:
+                    print(f"📖 Übersetze {len(texts_to_translate)} Zeilen MIT Glossar (ID: {glossary_to_use.glossary_id})")
+                else:
+                    print(f"⚠️ Übersetze {len(texts_to_translate)} Zeilen OHNE Glossar (self.glossary is None!)")
+                
                 results = self.translator.translate_text(
                     texts_to_translate,
                     target_lang="DE",
-                    glossary=self.glossary if self.glossary else None
+                    glossary=glossary_to_use
                 )
                 
                 # Reassemble with formatting and translations in the correct positions
