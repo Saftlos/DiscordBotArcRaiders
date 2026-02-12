@@ -75,22 +75,14 @@ class SteamNews(commands.Cog):
             existing_glossaries = self.translator.list_glossaries()
             print(f"📖 Glossar: {len(existing_glossaries)} existierende Glossare gefunden.")
             
-            # 2. Check if our glossary already exists
-            existing_glossary = None
+            # 2. Delete ALL existing glossaries (DeepL Free only allows 1!)
             for g in existing_glossaries:
-                print(f"  - Glossar: {g.name} ({g.entry_count} Einträge, ID: {g.glossary_id})")
-                if g.name == glossary_name:
-                    existing_glossary = g
-            
-            if existing_glossary:
-                print(f"📖 Altes Glossar gefunden, wird gelöscht und neu erstellt...")
+                print(f"  - Lösche Glossar: {g.name} ({g.entry_count} Einträge, ID: {g.glossary_id})")
                 try:
-                    self.translator.delete_glossary(existing_glossary)
-                    print("✅ Altes Glossar gelöscht.")
+                    self.translator.delete_glossary(g)
+                    print(f"    ✅ Gelöscht.")
                 except Exception as e:
-                    print(f"❌ Fehler beim Löschen des alten Glossars: {e}")
-                    self.glossary = existing_glossary
-                    return
+                    print(f"    ❌ Fehler beim Löschen: {e}")
 
             # 3. Create new glossary
             try:
