@@ -69,7 +69,7 @@ class Items(commands.Cog):
     @app_commands.describe(name="Der Name des Items")
     async def item_search(self, interaction: discord.Interaction, name: str):
         """Suche nach einem Item und zeige dessen Stats an."""
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         
         # Search in local cache first
         target_item = None
@@ -125,7 +125,7 @@ class Items(commands.Cog):
             print(f"Fehler beim Erstellen der Embed-Felder: {e}")
             embed.set_footer(text="Fehler beim Laden einiger Details.")
 
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @item_search.autocomplete('name')
     async def item_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:

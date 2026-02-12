@@ -15,7 +15,7 @@ class General(commands.Cog):
     @app_commands.describe(arc_name="Suche nach einem spezifischen ARC")
     async def arcs(self, interaction: discord.Interaction, arc_name: str = None):
         """Zeigt Informationen zu ARCs an."""
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         from utils.arc_data import ARC_DATA
         
         # If specific ARC requested
@@ -124,20 +124,20 @@ class General(commands.Cog):
             # Reuse caching logic
             if image_filename in self.image_cache:
                 embed.set_thumbnail(url=self.image_cache[image_filename])
-                await interaction.followup.send(embed=embed)
+                await interaction.followup.send(embed=embed, ephemeral=True)
                 return
 
             if os.path.exists(image_path):
                  file = discord.File(image_path, filename=image_filename)
                  embed.set_thumbnail(url=f"attachment://{image_filename}")
-                 msg = await interaction.followup.send(embed=embed, file=file, wait=True)
+                 msg = await interaction.followup.send(embed=embed, file=file, wait=True, ephemeral=True)
                  if msg.attachments:
                      self.image_cache[image_filename] = msg.attachments[0].url
             else:
                  # Check if API has image
                  if api_data and api_data.get("image"):
                       embed.set_thumbnail(url=api_data["image"])
-                 await interaction.followup.send(embed=embed)
+                 await interaction.followup.send(embed=embed, ephemeral=True)
             return
 
         # Overview List (Categorized)
@@ -166,7 +166,7 @@ class General(commands.Cog):
                 embed.add_field(name=cat_name, value=" • ".join(value_list), inline=False)
         
         embed.set_footer(text="Arc Raiders | Intel Database")
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @arcs.autocomplete("arc_name")
     async def arcs_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:

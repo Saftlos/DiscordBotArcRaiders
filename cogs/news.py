@@ -26,7 +26,7 @@ class SteamNews(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.news_channel_id = self.bot.config.get_channel_id("news")
-        self.steam_api_key = os.getenv("STEAM_API_KEY")
+
         self.app_id = os.getenv("ARC_RAIDERS_APP_ID")
         self.state_file = "data/news_state.json"
         self.last_posted_id = self.load_state()
@@ -43,22 +43,12 @@ class SteamNews(commands.Cog):
             except Exception as e:
                 print(f"Fehler beim Initialisieren von DeepL: {e}")
 
-        if self.steam_api_key and self.app_id and self.news_channel_id:
+        if self.app_id and self.news_channel_id:
             self.check_news.start()
         else:
-            print("Steam News: Fehlende Konfiguration (API Key, App ID oder Channel ID). Task nicht gestartet.")
+            print("Steam News: Fehlende Konfiguration (App ID oder Channel ID). Task nicht gestartet.")
 
-    def init_glossary(self):
-        if not self.translator: return
-        
-        terms = load_glossary_terms()
-        if not terms:
-            print("Keine Glossar-Begriffe gefunden.")
-            return
 
-        # Prepare Glossary Entries (Source = Target for DNT)
-        entries = {term: term for term in terms}
-        
     def init_glossary(self):
         if not self.translator: return
         
@@ -234,41 +224,71 @@ class SteamNews(commands.Cog):
         
         return text.strip()
 
-    @tasks.loop(minutes=15)
-    async def check_news(self):
-        url = f"http://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid={self.app_id}&count=5&maxlength=0&format=json"
+    async def fetch_latest_news(self, count=5):
+        """Holt die neuesten offiziellen News über die Steam Events API.
+        Gibt bei count=1 ein einzelnes Dict zurück, bei count>1 eine Liste.
+        Dict-Format: {gid, title, contents, url}
+        """
+        events_url = (
+            f"https://store.steampowered.com/events/ajaxgetpartnereventspageable/"
+            f"?clan_accountid=0&appid={self.app_id}&offset=0&count={count}&l=english"
+        )
         
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        news_items = data.get("appnews", {}).get("newsitems", [])
-                        
-                        if not news_items:
-                            return
-
-                        # Find the newest OFFICIAL news item
-                        latest_news = None
-                        for item in news_items:
-                            if item.get("feedname") == "steam_community_announcements":
-                                latest_news = item
-                                break
-                        
-                        if not latest_news:
-                            print("Keine offiziellen News im letzten Abruf gefunden.")
-                            return
-                        news_id = latest_news.get("gid")
-                        
-                        # If it's a new post
-                        if news_id != self.last_posted_id:
-                            # AUTOMATIC POST -> PING ROLE = TRUE
-                            await self.post_news(latest_news, ping_role=True)
-                            self.save_state(news_id)
-                    else:
-                        print(f"Steam News API gab Status zurück: {response.status}")
+                async with session.get(events_url) as response:
+                    if response.status != 200:
+                        print(f"Steam Events API gab Status zurück: {response.status}")
+                        return None
+                    
+                    data = await response.json()
+                    
+                    if not data.get("success"):
+                        print("Steam Events API: Anfrage nicht erfolgreich.")
+                        return None
+                    
+                    events = data.get("events", [])
+                    if not events:
+                        print("Keine Events in der Steam Events API gefunden.")
+                        return None
+                    
+                    results = []
+                    for event in events:
+                        ann = event.get("announcement_body", {})
+                        gid = str(ann.get("gid", ""))
+                        title = ann.get("headline", "Neuigkeiten zu Arc Raiders")
+                        body = ann.get("body", "")
+                        news_url = f"https://store.steampowered.com/news/app/{self.app_id}/view/{gid}"
+                        results.append({
+                            "gid": gid,
+                            "title": title,
+                            "contents": body,
+                            "url": news_url,
+                        })
+                    
+                    # Rückwärtskompatibel: bei count<=1 einzelnes Dict
+                    if count <= 1:
+                        return results[0] if results else None
+                    return results
+                    
         except Exception as e:
-            print(f"Fehler beim Prüfen der Steam News: {e}")
+            print(f"Fehler beim Abrufen der Steam Events: {e}")
+            return None
+
+    @tasks.loop(minutes=15)
+    async def check_news(self):
+        latest_news = await self.fetch_latest_news(count=1)
+        
+        if not latest_news:
+            return
+        
+        news_id = latest_news.get("gid")
+        
+        # Nur posten wenn es eine neue News ist
+        if news_id != self.last_posted_id:
+            # AUTOMATISCHER POST -> PING ROLE = TRUE
+            await self.post_news(latest_news, ping_role=True)
+            self.save_state(news_id)
 
     async def post_news(self, news_item, ping_role=False):
         channel = self.bot.get_channel(self.news_channel_id)
@@ -277,13 +297,11 @@ class SteamNews(commands.Cog):
             return
 
         # Translate Title
-        # Translate Title
         translated_title = await self.translate_text(news_item.get("title", "Neuigkeiten zu Arc Raiders"))
 
         # Parse content and extract images
         contents, image_urls = self.clean_html(news_item.get("contents", ""))
         
-        # Translate Content
         # Translate Content (Text is HTML here)
         translated_html = await self.translate_text(contents)
         translated_contents = self.html_to_discord_markdown(translated_html)
@@ -292,7 +310,6 @@ class SteamNews(commands.Cog):
         url = news_item.get("url")
         
         # Header Message
-        
         header = ""
         if ping_role:
              header += "<@&1466986718229041204>\n\n"
@@ -381,41 +398,121 @@ class SteamNews(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
         
-        # Fetch more items (e.g., 5) and unlimited length
-        url = f"http://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid={self.app_id}&count=20&maxlength=0&format=json"
-        
+
+
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        news_items = data.get("appnews", {}).get("newsitems", [])
-                        
-                        if not news_items:
-                            await interaction.followup.send("Keine News gefunden.", ephemeral=True)
-                            return
+            latest_news = await self.fetch_latest_news(count=1)
+            
+            if not latest_news:
+                await interaction.followup.send("Keine offiziellen News gefunden.", ephemeral=True)
+                return
 
-                        # Find the newest OFFICIAL news item
-                        latest_news = None
-                        for item in news_items:
-                            if item.get("feedname") == "steam_community_announcements":
-                                latest_news = item
-                                break
-                        
-                        if not latest_news:
-                            await interaction.followup.send("Keine offiziellen News gefunden.", ephemeral=True)
-                            return
-
-                        # MANUAL POST -> PING ROLE = FALSE
-                        await self.post_news(latest_news, ping_role=False)
-                        # Update state so we don't double post next check (optional, but good practice)
-                        self.save_state(latest_news.get("gid"))
-                        
-                        await interaction.followup.send("Neueste News wurde gepostet!", ephemeral=True)
-                    else:
-                        await interaction.followup.send(f"Fehler bei der Steam API: {response.status}", ephemeral=True)
+            # MANUELLER POST -> PING ROLE = FALSE
+            await self.post_news(latest_news, ping_role=False)
+            # State aktualisieren damit nicht doppelt gepostet wird
+            self.save_state(latest_news.get("gid"))
+            
+            await interaction.followup.send(
+                f"✅ Neueste News wurde gepostet: **{latest_news.get('title')}**", 
+                ephemeral=True
+            )
         except Exception as e:
             await interaction.followup.send(f"Fehler: {e}", ephemeral=True)
+
+    # ── /patchnotes Command ──────────────────────────────────────
+
+    @app_commands.command(name="patchnotes", description="Zeigt die letzten Patch Notes von Steam an")
+    async def patchnotes(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            news_list = await self.fetch_latest_news(count=5)
+            
+            if not news_list:
+                await interaction.followup.send("❌ Keine Patch Notes gefunden.", ephemeral=True)
+                return
+            
+            # Select Menu erstellen
+            view = PatchNotesView(news_list, self)
+            
+            embed = discord.Embed(
+                title="📋 Patch Notes",
+                description="Wähle eine News aus dem Dropdown-Menü:",
+                color=discord.Color.blue()
+            )
+            
+            for i, news in enumerate(news_list):
+                title = news.get('title', 'Unbekannt')
+                if len(title) > 60:
+                    title = title[:57] + "..."
+                embed.add_field(
+                    name=f"{i+1}. {title}",
+                    value=f"[Auf Steam lesen]({news.get('url', '#')})",
+                    inline=False
+                )
+            
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+            
+        except Exception as e:
+            await interaction.followup.send(f"❌ Fehler: {e}", ephemeral=True)
+
+
+class PatchNotesSelect(discord.ui.Select):
+    def __init__(self, news_list, cog):
+        self.news_list = news_list
+        self.cog = cog
+        
+        options = []
+        for i, news in enumerate(news_list):
+            title = news.get('title', 'Unbekannt')
+            if len(title) > 95:
+                title = title[:92] + "..."
+            options.append(discord.SelectOption(
+                label=title,
+                value=str(i),
+                description=f"News #{i+1}"
+            ))
+        
+        super().__init__(
+            placeholder="📰 Wähle eine News...",
+            options=options,
+            min_values=1,
+            max_values=1
+        )
+    
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
+        index = int(self.values[0])
+        news = self.news_list[index]
+        
+        title = news.get('title', 'Patch Notes')
+        body = news.get('contents', '')
+        url = news.get('url', '')
+        
+        # BBCode zu lesbarem Text konvertieren (ohne Übersetzung)
+        cleaned, _ = self.cog.clean_html(body)
+        content = self.cog.html_to_discord_markdown(cleaned)
+        
+        # Auf 4000 Zeichen begrenzen (Embed-Limit)
+        if len(content) > 4000:
+            content = content[:3997] + "..."
+        
+        embed = discord.Embed(
+            title=f"📰 {title}",
+            description=content,
+            color=discord.Color.blue(),
+            url=url
+        )
+        embed.set_footer(text="Quelle: Steam | Originalsprache (Englisch)")
+        
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+class PatchNotesView(discord.ui.View):
+    def __init__(self, news_list, cog):
+        super().__init__(timeout=300)
+        self.add_item(PatchNotesSelect(news_list, cog))
 
 async def setup(bot):
     await bot.add_cog(SteamNews(bot))

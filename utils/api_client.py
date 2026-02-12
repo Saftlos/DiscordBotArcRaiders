@@ -62,6 +62,9 @@ class ArcRaidersAPI:
         # Docs mention /events-schedule and /event-timers (deprecated)
         return await self._get("/events-schedule")
 
+    async def get_traders(self) -> Dict[str, Any]:
+        return await self._get("/traders")
+
     async def get_map_data(self, map_id: str) -> Dict[str, Any]:
         # This one is tricky. Docs say: /api/game-map-data
         # This is outside the /api/arc-raiders scope if base_url includes arc-raiders.

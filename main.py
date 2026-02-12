@@ -34,7 +34,9 @@ class ArcRaidersBot(commands.Bot):
             "cogs.admin",
             "cogs.moderation",
             "cogs.news",
-            "cogs.quests"
+            "cogs.quests",
+            "cogs.traders",
+            "cogs.playercount"
         ]
         
         for ext in initial_extensions:

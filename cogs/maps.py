@@ -66,7 +66,7 @@ class Maps(commands.Cog):
     ])
     async def map_info(self, interaction: discord.Interaction, map_name: str):
         """Zeige Details zu einer spezifischen Map."""
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         
         api: ArcRaidersAPI = self.bot.api
         data = await api.get_map_data(map_id=map_name)
@@ -74,7 +74,7 @@ class Maps(commands.Cog):
         map_data = data.get("allData", [])
         
         if not map_data:
-            await interaction.followup.send(f"Keine Daten für Map `{map_name}` gefunden.", ephemeral=True)
+            await interaction.followup.send(f"❌ Keine Daten für Map `{map_name}` gefunden.", ephemeral=True)
             return
 
         embed = discord.Embed(title=f"🗺️ Karte: {map_name.replace('-', ' ').title()}", color=discord.Color.green())
@@ -107,7 +107,7 @@ class Maps(commands.Cog):
             embed.description = "Keine interessanten Punkte gefunden."
             
         view = MapView(map_data)
-        await interaction.followup.send(embed=embed, view=view)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Maps(bot))

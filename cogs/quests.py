@@ -11,7 +11,7 @@ class Quests(commands.Cog):
     @app_commands.describe(name="Name der Quest")
     async def quest_search(self, interaction: discord.Interaction, name: str):
         """Zeigt Quest-Details an."""
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         
         api: ArcRaidersAPI = self.bot.api
         data = await api.get_quests(search=name, page=1)
@@ -81,7 +81,7 @@ class Quests(commands.Cog):
             link_text = " | ".join([f"[{l.get('label', 'Guide')}]({l.get('url')})" for l in links])
             embed.add_field(name="🔗 Guides", value=link_text, inline=False)
 
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=True)
         
     @quest_search.autocomplete('name')
     async def quest_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
