@@ -300,7 +300,7 @@ class General(commands.Cog):
                 
                 # 2. Fallback to Name Lookup (only if ID failed)
                 if not channel:
-                    channel_name = map_name.lower().replace(" ", "-").replace("'", "")
+                    channel_name = map_name.lower().replace(" ", "-").replace("'", "").strip()
                     
                     # Try finding by name in a loop or get utils
                     # We need to find if it exists anywhere or in a specific category?
@@ -311,7 +311,10 @@ class General(commands.Cog):
                     category = discord.utils.get(guild.categories, name=cat_name)
                     
                     if category:
-                        channel = discord.utils.get(guild.text_channels, name=channel_name, category_id=category.id)
+                        for c in category.text_channels:
+                            if c.name == channel_name or c.name.endswith(f"◽{channel_name}"):
+                                channel = c
+                                break
                     
                     if not channel:
                         # CREATE NEW logic
