@@ -306,9 +306,13 @@ class General(commands.Cog):
                     # We need to find if it exists anywhere or in a specific category?
                     # Ideally we look globally or in our Known Category.
                     
-                    # Get or Create Category (Lazy create only if we need to CREATE a channel)
-                    cat_name = "📅 EVENT TIMERS"
-                    category = discord.utils.get(guild.categories, name=cat_name)
+                    # Get Category by ID
+                    category_id = 1466957971706740943
+                    category = guild.get_channel(category_id)
+                    
+                    if not category:
+                        cat_name = "📅 EVENT TIMERS"
+                        category = discord.utils.get(guild.categories, name=cat_name)
                     
                     if category:
                         for c in category.text_channels:
@@ -320,6 +324,7 @@ class General(commands.Cog):
                         # CREATE NEW logic
                         if not category:
                              try:
+                                cat_name = "📅 EVENT TIMERS"
                                 category = await guild.create_category(cat_name)
                                 await category.set_permissions(guild.default_role, send_messages=False, add_reactions=False, connect=False)
                              except Exception as e:
