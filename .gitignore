@@ -20,3 +20,6 @@ data/news_state.json
 debug_*.py
 *_debug.json
 .gemini/
+# Moderation records contain user data and must never be published
+data/history.json
+data/mutes.json

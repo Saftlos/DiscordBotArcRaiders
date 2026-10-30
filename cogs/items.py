@@ -5,6 +5,8 @@ from utils.api_client import ArcRaidersAPI
 import asyncio
 
 class Items(commands.Cog):
+    """/item with autocomplete, backed by a local copy of all items refreshed every 6 hours."""
+
     def __init__(self, bot):
         self.bot = bot
         self.all_items = []
@@ -30,9 +32,9 @@ class Items(commands.Cog):
                     break
                     
                 new_cache.extend(items)
-                
-                # Safety break if too many pages (avoid infinite loop)
-                if len(items) < 100: 
+
+                # A short page means it was the last one
+                if len(items) < 100:
                     break
                     
                 page += 1
@@ -52,11 +54,12 @@ class Items(commands.Cog):
         await self.bot.wait_until_ready()
 
     def get_rarity_color(self, rarity: str) -> discord.Color:
+        # "uncommon" has to be checked before "common", it contains it
         rarity = rarity.lower()
-        if "common" in rarity:
-            return discord.Color.light_grey()
-        elif "uncommon" in rarity:
+        if "uncommon" in rarity:
             return discord.Color.green()
+        elif "common" in rarity:
+            return discord.Color.light_grey()
         elif "rare" in rarity:
             return discord.Color.blue()
         elif "epic" in rarity:

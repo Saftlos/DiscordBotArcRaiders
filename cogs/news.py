@@ -4,14 +4,15 @@ from discord.ext import commands, tasks
 import aiohttp
 import json
 import os
-import datetime
 import html
 import re
-import deepl
-from deepl import QuotaExceededException
+from io import BytesIO
 
-# Load glossary terms
+import deepl
+
+# Game terms that must never be translated ("Stash" stays "Stash")
 GLOSSARY_FILE = "data/glossary.json"
+GLOSSARY_NAME = "ArcRaiders_Glossary"
 
 def load_glossary_terms():
     if os.path.exists(GLOSSARY_FILE):
@@ -23,9 +24,12 @@ def load_glossary_terms():
     return []
 
 class SteamNews(commands.Cog):
+    """Polls the official Steam announcements, converts BBCode to Discord Markdown and translates via DeepL."""
+
     def __init__(self, bot):
         self.bot = bot
         self.news_channel_id = self.bot.config.get_channel_id("news")
+        self._session = None
 
         self.app_id = os.getenv("ARC_RAIDERS_APP_ID")
         self.state_file = "data/news_state.json"
@@ -68,26 +72,22 @@ class SteamNews(commands.Cog):
             entries[term.lower()] = term         # lowercase: "shared watch" -> "Shared Watch"
         
         print(f"📖 Glossar: {len(entries)} Einträge (mit Case-Varianten) vorbereitet.")
-        glossary_name = "ArcRaiders_Glossary"
-        
+
         try:
-            # 1. List existing glossaries
-            existing_glossaries = self.translator.list_glossaries()
-            print(f"📖 Glossar: {len(existing_glossaries)} existierende Glossare gefunden.")
-            
-            # 2. Delete ALL existing glossaries (DeepL Free only allows 1!)
-            for g in existing_glossaries:
-                print(f"  - Lösche Glossar: {g.name} ({g.entry_count} Einträge, ID: {g.glossary_id})")
+            # Glossaries can't be edited, so the bot's own one is replaced on every start.
+            # Only glossaries with our name are touched, others in the DeepL account stay.
+            for g in self.translator.list_glossaries():
+                if g.name != GLOSSARY_NAME:
+                    continue
                 try:
                     self.translator.delete_glossary(g)
-                    print(f"    ✅ Gelöscht.")
+                    print(f"  - Altes Glossar gelöscht ({g.entry_count} Einträge, ID: {g.glossary_id})")
                 except Exception as e:
-                    print(f"    ❌ Fehler beim Löschen: {e}")
+                    print(f"  ❌ Fehler beim Löschen: {e}")
 
-            # 3. Create new glossary
             try:
                 self.glossary = self.translator.create_glossary(
-                    glossary_name,
+                    GLOSSARY_NAME,
                     source_lang="EN",
                     target_lang="DE",
                     entries=entries
@@ -187,7 +187,7 @@ class SteamNews(commands.Cog):
 
     async def cog_unload(self):
         self.check_news.cancel()
-        if hasattr(self, '_session') and self._session and not self._session.closed:
+        if self._session and not self._session.closed:
             await self._session.close()
 
     def bbcode_to_markdown(self, raw_text):
@@ -266,7 +266,7 @@ class SteamNews(commands.Cog):
 
     async def get_session(self):
         """Returns a cached aiohttp session, creating one if needed."""
-        if not hasattr(self, '_session') or self._session is None or self._session.closed:
+        if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
         return self._session
 
@@ -371,20 +371,18 @@ class SteamNews(commands.Cog):
         url = news_item.get("url")
         header_image_url = news_item.get("header_image")
         
-        # Header
         header = ""
-        if ping_role:
-             header += "<@&1466986718229041204>\n\n"
+        ping_role_id = self.bot.config.get_role_id("news_ping")
+        if ping_role and ping_role_id:
+            header += f"<@&{ping_role_id}>\n\n"
         header += f"**{translated_title}**\n\n"
-        
+
         full_text = header + translated_contents
-        
-        # Footer
-        footer = ""
+
         if url:
-            footer += f"\n\n[Original Artikel auf Steam](<{url}>)"
-        footer += "\n_(Automatisch übersetzt mit DeepL)_"
-        full_text += footer
+            full_text += f"\n\n[Original Artikel auf Steam](<{url}>)"
+        if self.translator:
+            full_text += "\n_(Automatisch übersetzt mit DeepL)_"
         
         try:
             session = await self.get_session()
@@ -395,7 +393,6 @@ class SteamNews(commands.Cog):
                 try:
                     async with session.get(header_image_url) as resp:
                         if resp.status == 200:
-                            from io import BytesIO
                             header_data = await resp.read()
                             header_file = discord.File(BytesIO(header_data), filename="header.jpg")
                 except Exception as e:
@@ -443,7 +440,6 @@ class SteamNews(commands.Cog):
                 elif seg_type == 'image':
                     img_idx = seg_content
                     if img_idx in downloaded_images:
-                        from io import BytesIO
                         file_obj = discord.File(BytesIO(downloaded_images[img_idx]), filename=f"image_{img_idx}.jpg")
                         await channel.send(file=file_obj)
             
@@ -458,27 +454,16 @@ class SteamNews(commands.Cog):
     async def before_check_news(self):
         await self.bot.wait_until_ready()
 
-    @app_commands.command(name="force_news", description="Erzwingt das Posten der neuesten Steam News (Admin only)")
-    @app_commands.default_permissions(administrator=True)
+    @app_commands.command(name="force_news", description="Postet sofort die neueste Steam-News (Team only)")
+    # Visible for the mod team; the actual check uses the roles from config.json
+    @app_commands.default_permissions(moderate_members=True)
     async def force_news(self, interaction: discord.Interaction):
-        # Check permissions manually using IDs from config
-        allowed_roles = ["admin", "supervisor", "moderator"]
-        user_role_ids = [role.id for role in interaction.user.roles]
-        
-        has_permission = False
-        for role_key in allowed_roles:
-            role_id = self.bot.config.get_role_id(role_key)
-            if role_id and role_id in user_role_ids:
-                has_permission = True
-                break
-        
-        if not has_permission:
+        allowed_ids = self.bot.config.get_role_ids_list("news_allowed")
+        if not any(role.id in allowed_ids for role in interaction.user.roles):
             await interaction.response.send_message("⛔ **Zugriff verweigert!** Du hast nicht die nötigen Rechte.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
-        
-
 
         try:
             latest_news = await self.fetch_latest_news(count=1)

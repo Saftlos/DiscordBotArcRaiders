@@ -21,7 +21,7 @@ class Moderation(commands.Cog):
         if not os.path.exists(filepath):
             return {}
         try:
-            with open(filepath, "r") as f:
+            with open(filepath, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
             print(f"❌ Fehler beim Laden von {filepath}: {e}")
@@ -29,8 +29,8 @@ class Moderation(commands.Cog):
 
     def save_data(self, filepath, data):
         try:
-            with open(filepath, "w") as f:
-                json.dump(data, f, indent=4)
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4, ensure_ascii=False)
         except Exception as e:
             print(f"❌ Fehler beim Speichern von {filepath}: {e}")
 
@@ -79,6 +79,18 @@ class Moderation(commands.Cog):
     
     def is_staff(self, user: discord.Member) -> bool:
         return self.has_permission(user, "mute_allowed")
+
+    def hierarchy_error(self, actor: discord.Member, target: discord.Member):
+        """Returns an error text if actor may not punish target, otherwise None."""
+        if target.id == actor.id:
+            return "⛔ Du kannst dich nicht selbst bestrafen."
+        if target.id == target.guild.owner_id:
+            return "⛔ Der Server-Owner kann nicht bestraft werden."
+        if actor.id != actor.guild.owner_id and target.top_role >= actor.top_role:
+            return "⛔ Du kannst niemanden mit gleicher oder höherer Rolle bestrafen."
+        if target.top_role >= target.guild.me.top_role:
+            return "⛔ Die Rolle dieses Users steht über der Bot-Rolle."
+        return None
 
     async def log_strafakte(self, interaction: discord.Interaction, target: discord.Member, action: str, reason: str, duration: str = None, ban_recommendation: bool = False):
         """Creates the Strafakte Embed."""
@@ -196,7 +208,6 @@ class Moderation(commands.Cog):
             content_lower = content.lower()
             
             if content_lower.startswith("notiz:"):
-                # ... (Logic identical to previous, just logging history maybe not needed for notes) ...
                 note_text = content[6:].strip()
                 if note_text:
                     note_field_index = -1
@@ -245,9 +256,7 @@ class Moderation(commands.Cog):
                         self.active_mutes[target_user_id]["end_time"] = new_end_time
                         self.save_data(MUTES_FILE, self.active_mutes)
                         await message.add_reaction("✅")
-                        
-                        # History update? Maybe too specific, skipped for brevity.
-                    
+
                 except ValueError:
                     await message.add_reaction("❓")
                     cleanup_message = False
@@ -291,7 +300,10 @@ class Moderation(commands.Cog):
         if not self.has_permission(interaction.user, "mute_allowed"):
             await interaction.response.send_message("⛔ Keine Berechtigung!", ephemeral=True)
             return
-            
+        if error := self.hierarchy_error(interaction.user, member):
+            await interaction.response.send_message(error, ephemeral=True)
+            return
+
         role_id = self.bot.config.get_role_id("muted")
         role = interaction.guild.get_role(role_id)
         if not role:
@@ -375,6 +387,9 @@ class Moderation(commands.Cog):
         if not self.has_permission(interaction.user, "kick_allowed"):
             await interaction.response.send_message("⛔ Keine Berechtigung!", ephemeral=True)
             return
+        if error := self.hierarchy_error(interaction.user, member):
+            await interaction.response.send_message(error, ephemeral=True)
+            return
 
         await interaction.response.defer(ephemeral=True)
         try:
@@ -390,6 +405,9 @@ class Moderation(commands.Cog):
     async def ban(self, interaction: discord.Interaction, member: discord.Member, reason: str):
         if not self.has_permission(interaction.user, "ban_allowed"):
             await interaction.response.send_message("⛔ Keine Berechtigung!", ephemeral=True)
+            return
+        if error := self.hierarchy_error(interaction.user, member):
+            await interaction.response.send_message(error, ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)

@@ -29,8 +29,7 @@ class Quests(commands.Cog):
         q_trader = quest.get("trader_name", "Unbekannt")
         q_img = quest.get("image")
         
-        # Description / Objectives
-        # Some quests have 'objectives' list, some might have 'description' (though debug showed objectives)
+        # Objectives are a list of plain strings
         objectives = quest.get("objectives", [])
         desc_text = "\n".join([f"• {obj}" for obj in objectives]) if objectives else "Keine Beschreibung verfügbar."
         
@@ -41,13 +40,11 @@ class Quests(commands.Cog):
             
         embed.add_field(name="👤 Auftraggeber", value=q_trader, inline=True)
         
-        # Requirements
-        # Note: API usually returns 'required_items' similar to rewards
+        # required_items and rewards share the shape {"item": {"name", "rarity"}, "quantity"}
         reqs = quest.get("required_items", [])
         if reqs:
             req_text = ""
             for r in reqs:
-                # Structure assumption based on rewards: { "item": { "name": "..." }, "quantity": "..." }
                 item_obj = r.get("item", {})
                 item_name = item_obj.get("name") or r.get("item_id", "Item")
                 count = r.get("quantity", "1")
@@ -85,12 +82,16 @@ class Quests(commands.Cog):
         
     @quest_search.autocomplete('name')
     async def quest_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+        # Runs on every keystroke, so it must never raise
+        # The API rejects searches shorter than 2 characters (HTTP 400)
+        if len(current) < 2:
+            return []
         api: ArcRaidersAPI = self.bot.api
         data = await api.get_quests(search=current, page=1)
-        quests = data.get("data", [])
+        quests = data.get("data") or []
         return [
-            app_commands.Choice(name=q["name"], value=q["name"])
-            for q in quests[:25]
+            app_commands.Choice(name=q["name"][:100], value=q["name"][:100])
+            for q in quests[:25] if q.get("name")
         ]
 
 async def setup(bot):

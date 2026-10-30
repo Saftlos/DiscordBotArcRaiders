@@ -6,7 +6,7 @@ from utils.api_client import ArcRaidersAPI
 
 class MapView(View):
     def __init__(self, map_data):
-        super().__init__(timeout=None) # Persistent view logic not needed for ephemeral interactions usually, but good practice
+        super().__init__(timeout=None)
         self.map_data = map_data
 
     def get_list(self, filter_type: str) -> str:
@@ -17,7 +17,7 @@ class MapView(View):
             
             lat = item.get("lat")
             lng = item.get("lng")
-            coords = f"({int(lat)}, {int(lng)})" if lat and lng else ""
+            coords = f"({int(lat)}, {int(lng)})" if lat is not None and lng is not None else ""
             
             if filter_type == "spawns" and sub == "player_spawn":
                 lines.append(f"📍 {coords}")
@@ -101,7 +101,8 @@ class Maps(commands.Cog):
         embed.add_field(name="🚁 Extraktionspunkte", value=f"📍 {extractions_count} verfügbar", inline=True)
         
         if pois:
-            embed.add_field(name="🏙️ POIs (Auszug)", value=", ".join(pois[:5]) + "...", inline=False)
+            more = f" und {len(pois) - 5} weitere" if len(pois) > 5 else ""
+            embed.add_field(name="🏙️ POIs (Auszug)", value=", ".join(pois[:5]) + more, inline=False)
 
         if spawns_count == 0 and not pois:
             embed.description = "Keine interessanten Punkte gefunden."
